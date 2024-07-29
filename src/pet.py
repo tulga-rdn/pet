@@ -336,39 +336,48 @@ class CentralSpecificModel(torch.nn.Module):
         return result
 
 
-class FeedForward(torch.nn.Module):
+class FeedForwardWithoutLastLayer(torch.nn.Module):
     def __init__(self, hypers, n_in, n_neurons):
-        super(FeedForward, self).__init__()
+        super(FeedForwardWithoutLastLayer, self).__init__()
         self.hypers = hypers
         self.nn = nn.Sequential(
             nn.Linear(n_in, n_neurons),
             get_activation(hypers),
             nn.Linear(n_neurons, n_neurons),
             get_activation(hypers),
-            nn.Linear(n_neurons, hypers.D_OUTPUT),
         )
 
     def forward(self, x):
         return self.nn(x)
 
 
-class Head(torch.nn.Module):
+class FeedForwardLastLayer(torch.nn.Module):
+    def __init__(self, hypers, n_neurons):
+        super(FeedForwardLastLayer, self).__init__()
+        self.hypers = hypers
+        self.nn = nn.Linear(n_neurons, hypers.D_OUTPUT)
+
+    def forward(self, x):
+        return self.nn(x)
+
+
+class HeadWithoutLastLayer(torch.nn.Module):
     def __init__(self, hypers, n_in, n_neurons):
-        super(Head, self).__init__()
+        super(HeadWithoutLastLayer, self).__init__()
         self.n_targets = hypers.N_TARGETS
         self.d_output = hypers.D_OUTPUT
         self.hypers = hypers
         if self.n_targets == 1:
-            self.model = FeedForward(hypers, n_in, n_neurons)
+            self.model = FeedForwardWithoutLastLayer(hypers, n_in, n_neurons)
         else:
             self.models = nn.ModuleList(
-                [FeedForward(hypers, n_in, n_neurons) for _ in range(self.n_targets)]
+                [FeedForwardWithoutLastLayer(hypers, n_in, n_neurons) for _ in range(self.n_targets)]
             )
 
     def forward(self, batch: Dict[str, torch.Tensor]):
         x = batch["pooled"]
         if self.n_targets == 1:
-            return {"atomic_predictions": self.model(x)}
+            return {"hidden": self.model(x)}
 
         target_indices = batch['target_indices']
         if target_indices is None:
@@ -404,18 +413,74 @@ class Head(torch.nn.Module):
             # Place the model output in the corresponding positions in the overall output tensor
             outputs[mask] = model_output
 
+        return {"hidden": outputs}
+
+
+class HeadLastLayer(torch.nn.Module):
+    def __init__(self, hypers, n_neurons):
+        super(HeadLastLayer, self).__init__()
+        self.n_targets = hypers.N_TARGETS
+        self.d_output = hypers.D_OUTPUT
+        self.hypers = hypers
+        if self.n_targets == 1:
+            self.model = FeedForwardLastLayer(hypers, n_neurons)
+        else:
+            self.models = nn.ModuleList(
+                [FeedForwardLastLayer(hypers, n_neurons) for _ in range(self.n_targets)]
+            )
+
+    def forward(self, hidden: torch.Tensor, target_indices: Optional[torch.Tensor] = None):
+        if self.n_targets == 1:
+            return {"atomic_predictions": self.model(hidden)}
+
+        if target_indices is None:
+            raise ValueError("target indices should be provided for multitarget fitting")
+
+        # Check if all target indices are within valid range
+        if torch.any(target_indices < 0) or torch.any(target_indices >= self.n_targets):
+            raise ValueError(
+                f"All target indices must be within 0 and {self.n_targets - 1} inclusive.")
+
+        # Check if the first dimension of x matches the dimension of target_indices
+        if hidden.size(0) != target_indices.size(0):
+            raise ValueError(
+                "The first dimension of hidden and target_indices must match.")
+
+        # Determine the shape for the output tensor, replacing the last dimension with d_output
+        output_shape = list(hidden.shape)
+        output_shape[-1] = self.d_output
+        outputs = torch.zeros(output_shape, device=hidden.device)
+
+        for target_idx in range(self.n_targets):
+            # Create a mask for the current target index
+            mask = (target_indices == target_idx)
+            if mask.sum().item() == 0:
+                continue
+
+            # Select the inputs for the current target index
+            hidden_subtensor = hidden[mask]
+
+            # Get the model output for the current target index
+            model_output = self.models[target_idx](hidden_subtensor)
+
+            # Place the model output in the corresponding positions in the overall output tensor
+            outputs[mask] = model_output
+
         return {"atomic_predictions": outputs}
 
 
 class CentralTokensPredictor(torch.nn.Module):
-    def __init__(self, hypers, head):
+    def __init__(self, hypers, head, head_last_layer):
         super(CentralTokensPredictor, self).__init__()
         self.head = head
+        self.head_last_layer = head_last_layer
         self.hypers = hypers
 
     def forward(self, central_tokens: torch.Tensor, central_species: torch.Tensor, target_indices: torch.Tensor):
-        predictions = self.head(
+        hidden = self.head(
             {"pooled": central_tokens, 'target_indices' : target_indices}
+        )["hidden"]
+        predictions = self.head_last_layer(hidden, target_indices
         )["atomic_predictions"]
         return predictions
 
@@ -503,10 +568,7 @@ class PET(torch.nn.Module):
         gnn_layers = []
         if transformers_central_specific:
             for layer_index in range(n_gnn_layers):
-                if layer_index == 0:
-                    is_first = True
-                else:
-                    is_first = False
+                is_first = (layer_index == 0)
                 models = {
                     str(i): CartesianTransformer(
                         hypers,
@@ -525,10 +587,7 @@ class PET(torch.nn.Module):
                 gnn_layers.append(CentralSpecificModel(models))
         else:
             for layer_index in range(n_gnn_layers):
-                if layer_index == 0:
-                    is_first = True
-                else:
-                    is_first = False
+                is_first = (layer_index == 0)
                 model = CartesianTransformer(
                     hypers,
                     transformer_d_model,
@@ -545,25 +604,27 @@ class PET(torch.nn.Module):
         self.gnn_layers = torch.nn.ModuleList(gnn_layers)
 
         heads = []
+        head_last_layers = []
         if heads_central_specific:
             for _ in range(n_gnn_layers):
                 models = {
-                    str(i): Head(hypers, transformer_d_model, head_n_neurons)
+                    str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
                     for i in range(len(all_species))
                 }
                 heads.append(CentralSpecificModel(models))
-
-            models = {
-                str(i): Head(hypers, transformer_d_model, head_n_neurons)
-                for i in range(len(all_species))
-            }
+                head_last_layers.append(
+                    {str(i): HeadLastLayer(hypers, head_n_neurons)
+                     for i in range(len(all_species))}
+                )
         else:
             for _ in range(n_gnn_layers):
-                heads.append(Head(hypers, transformer_d_model, head_n_neurons))
+                heads.append(HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
+                head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
 
-        self.heads = torch.nn.ModuleList(heads)
-        self.central_tokens_predictors = torch.nn.ModuleList(
-            [CentralTokensPredictor(hypers, head) for head in heads]
+        self.heads = nn.ModuleList(heads)
+        self.head_last_layers = torch.nn.ModuleList(head_last_layers)
+        self.central_tokens_predictors = nn.ModuleList(
+            [CentralTokensPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
         )
         self.messages_predictors = torch.nn.ModuleList(
             [MessagesPredictor(hypers, head) for head in heads]
@@ -571,31 +632,27 @@ class PET(torch.nn.Module):
 
         if hypers.USE_BOND_ENERGIES:
             bond_heads = []
+            bond_head_last_layers = []
             if heads_central_specific:
                 for _ in range(n_gnn_layers):
                     models = {
-                        str(i): Head(hypers, transformer_d_model, head_n_neurons)
+                        str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
                         for i in range(len(all_species))
                     }
                     bond_heads.append(CentralSpecificModel(models))
-
-                models = {
-                    str(i): Head(hypers, transformer_d_model, head_n_neurons)
-                    for i in range(len(all_species))
-                }
+                    bond_head_last_layers.append(
+                        {str(i): HeadLastLayer(hypers, head_n_neurons)
+                         for i in range(len(all_species))}
+                    )
             else:
                 for _ in range(n_gnn_layers):
-                    bond_heads.append(
-                        Head(hypers, transformer_d_model, head_n_neurons))
+                    bond_head = HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                    bond_heads.append(bond_head)
+                    bond_head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
 
-            self.bond_heads = torch.nn.ModuleList(bond_heads)
-            self.messages_bonds_predictors = torch.nn.ModuleList(
-                [MessagesBondsPredictor(hypers, head) for head in bond_heads]
-            )
-        else:
-            self.messages_bonds_predictors = torch.nn.ModuleList(
-                [NeverRun() for _ in range(n_gnn_layers)]
-            )
+            self.bond_heads = nn.ModuleList(bond_heads)
+            self.bond_head_last_layers = nn.ModuleList(bond_head_last_layers)
+            self.messages_bonds_predictors = nn.ModuleList([MessagesPredictor(hypers, bond_head) for bond_head in bond_heads])
 
         self.R_CUT = hypers.R_CUT
         self.CUTOFF_DELTA = hypers.CUTOFF_DELTA
@@ -654,18 +711,21 @@ class PET(torch.nn.Module):
             )
 
             if "central_token" in result.keys():
-                atomic_predictions = atomic_predictions + central_tokens_predictor(
+                hidden = central_tokens_predictor(
                     result["central_token"], central_species, target_indices
                 )
+                atomic_predictions += self.head_last_layers[layer_index].forward(hidden, target_indices)
             else:
-                atomic_predictions = atomic_predictions + messages_predictor(
+                hidden = messages_predictor(
                     output_messages, mask, nums, central_species, multipliers, target_indices
                 )
+                atomic_predictions += self.head_last_layers[layer_index].forward(hidden, target_indices)
 
             if self.USE_BOND_ENERGIES:
-                atomic_predictions = atomic_predictions + messages_bonds_predictor(
+                hidden = messages_bonds_predictor(
                     output_messages, mask, nums, central_species, multipliers, target_indices
                 )
+                atomic_predictions += self.bond_head_last_layers[layer_index].forward(hidden, target_indices)
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -681,11 +741,55 @@ class PET(torch.nn.Module):
             return atomic_predictions
         raise ValueError("unknown target type")
 
-    def forward(
-        self,
-        batch_dict: Dict[str, torch.Tensor],
-        rotations: Optional[torch.Tensor] = None,
-    ):
+    def get_last_layer(self, batch_dict: Dict[str, torch.Tensor]):
+        x = batch_dict["x"]
+        central_species = batch_dict["central_species"]
+        neighbor_species = batch_dict["neighbor_species"]
+        batch = batch_dict["batch"]
+        mask = batch_dict["mask"]
+        nums = batch_dict["nums"]
+
+        if 'target_id' in batch_dict.keys():
+            target_indices = batch_dict['target_id']
+            target_indices = target_indices[batch]
+        else:
+            target_indices = None
+
+        lengths = torch.sqrt(torch.sum(x * x, dim=2) + 1e-16)
+        multipliers = cutoff_func(lengths, self.hypers.R_CUT, self.hypers.CUTOFF_DELTA)
+        multipliers[mask] = 0.0
+
+        neighbors_index = batch_dict["neighbors_index"]
+        neighbors_pos = batch_dict["neighbors_pos"]
+
+        batch_dict["input_messages"] = self.embedding(neighbor_species)
+
+        for layer_index, (central_tokens_predictor, messages_predictor, gnn_layer, messages_bonds_predictor) in enumerate(
+            zip(self.central_tokens_predictors, self.messages_predictors, self.gnn_layers, self.messages_bonds_predictors)
+        ):
+            result = gnn_layer(batch_dict)
+            output_messages = result["output_messages"]
+
+            new_input_messages = output_messages[neighbors_index, neighbors_pos]
+            batch_dict["input_messages"] = 0.5 * (batch_dict["input_messages"] + new_input_messages)
+
+            if layer_index == self.hypers.N_GNN_LAYERS - 1:
+                if "central_token" in result.keys():
+                    hidden = central_tokens_predictor.head(
+                        {"pooled": result["central_token"], 'target_indices': target_indices}
+                    )["hidden"]
+                else:
+                    hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+
+                if self.hypers.USE_BOND_ENERGIES:
+                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+                    return hidden, hidden_bonds
+                else:
+                    return hidden
+
+        raise ValueError("No last layer found")
+
+    def forward(self, batch_dict: Dict[str, torch.Tensor], rotations: Optional[torch.Tensor] = None):
         if rotations is not None:
             x_initial = batch_dict["x"]
             batch_dict["x"] = torch.bmm(x_initial, rotations)
