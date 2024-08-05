@@ -485,9 +485,10 @@ class CentralTokensPredictor(torch.nn.Module):
 
 
 class MessagesPredictor(torch.nn.Module):
-    def __init__(self, hypers, head):
+    def __init__(self, hypers, head, head_last_layer):
         super(MessagesPredictor, self).__init__()
         self.head = head
+        self.head_last_layer = head_last_layer
         self.AVERAGE_POOLING = hypers.AVERAGE_POOLING
 
     def forward(
@@ -507,9 +508,8 @@ class MessagesPredictor(torch.nn.Module):
         else:
             pooled = messages_proceed.sum(dim=1)
 
-        predictions = self.head({"pooled": pooled, 'target_indices' : target_indices})[
-            "atomic_predictions"
-        ]
+        hidden = self.head({"pooled": pooled, 'target_indices': target_indices})["hidden"]
+        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
         return predictions
 
 
@@ -615,6 +615,10 @@ class PET(torch.nn.Module):
                     {str(i): HeadLastLayer(hypers, head_n_neurons)
                      for i in range(len(all_species))}
                 )
+            models = {
+                str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                for i in range(len(all_species))
+            }
         else:
             for _ in range(n_gnn_layers):
                 heads.append(HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
@@ -626,10 +630,11 @@ class PET(torch.nn.Module):
             [CentralTokensPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
         )
         self.messages_predictors = torch.nn.ModuleList(
-            [MessagesPredictor(hypers, head) for head in heads]
+            [MessagesPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
         )
 
-        if hypers.USE_BOND_ENERGIES:
+        # if hypers.USE_BOND_ENERGIES:
+        if False:
             bond_heads = []
             bond_head_last_layers = []
             if heads_central_specific:
@@ -651,8 +656,11 @@ class PET(torch.nn.Module):
 
             self.bond_heads = nn.ModuleList(bond_heads)
             self.bond_head_last_layers = nn.ModuleList(bond_head_last_layers)
-            self.messages_bonds_predictors = nn.ModuleList([MessagesPredictor(hypers, bond_head) for bond_head in bond_heads])
-
+            self.messages_bonds_predictors = nn.ModuleList([MessagesPredictor(hypers, bond_head, bond_head_last_layer) for bond_head, bond_head_last_layer in zip(bond_heads, bond_head_last_layers)])
+        else:
+            self.messages_bonds_predictors = torch.nn.ModuleList(
+                [NeverRun() for _ in range(n_gnn_layers)]
+            )
         self.R_CUT = hypers.R_CUT
         self.CUTOFF_DELTA = hypers.CUTOFF_DELTA
         self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
@@ -663,68 +671,28 @@ class PET(torch.nn.Module):
     def get_predictions(self, batch_dict: Dict[str, torch.Tensor]):
 
         x = batch_dict["x"]
-        central_species = batch_dict["central_species"]
-        neighbor_species = batch_dict["neighbor_species"]
-        batch = batch_dict["batch"]
-        mask = batch_dict["mask"]
-        nums = batch_dict["nums"]
 
         if 'target_id' in batch_dict.keys():
             target_indices = batch_dict['target_id']
+            batch = batch_dict["batch"]
             target_indices = target_indices[batch]
         else:
             target_indices = None
-        #print(target_indices, type(target_indices[0]))
-        lengths = torch.sqrt(torch.sum(x * x, dim=2) + 1e-16)
-        multipliers = cutoff_func(lengths, self.R_CUT, self.CUTOFF_DELTA)
-        multipliers[mask] = 0.0
 
-        neighbors_index = batch_dict["neighbors_index"]
-        neighbors_pos = batch_dict["neighbors_pos"]
-
-        batch_dict["input_messages"] = self.embedding(neighbor_species)
         atomic_predictions = torch.zeros(1, dtype=x.dtype, device=x.device)
 
-        for layer_index, (
-            central_tokens_predictor,
-            messages_predictor,
-            gnn_layer,
-            messages_bonds_predictor,
-        ) in enumerate(
-            zip(
-                self.central_tokens_predictors,
-                self.messages_predictors,
-                self.gnn_layers,
-                self.messages_bonds_predictors,
-            )
-        ):
+        # TODO: hidden_bonds ?
+        # hidden, hidden_bonds = self.get_last_layer(batch_dict)
+        hidden = self.get_last_layer(batch_dict)
 
-            result = gnn_layer(batch_dict)
-            output_messages = result["output_messages"]
+        if hidden is not None:
+            result = self.head_last_layers[-1].forward(hidden, target_indices)
+            atomic_predictions = result["atomic_predictions"]
 
-            # batch_dict['input_messages'] = output_messages[neighbors_index, neighbors_pos]
-            new_input_messages = output_messages[neighbors_index,
-                                                 neighbors_pos]
-            batch_dict["input_messages"] = 0.5 * (
-                batch_dict["input_messages"] + new_input_messages
-            )
-
-            if "central_token" in result.keys():
-                hidden = central_tokens_predictor(
-                    result["central_token"], central_species, target_indices
-                )
-                atomic_predictions += self.head_last_layers[layer_index].forward(hidden, target_indices)
-            else:
-                hidden = messages_predictor(
-                    output_messages, mask, nums, central_species, multipliers, target_indices
-                )
-                atomic_predictions += self.head_last_layers[layer_index].forward(hidden, target_indices)
-
-            if self.USE_BOND_ENERGIES:
-                hidden = messages_bonds_predictor(
-                    output_messages, mask, nums, central_species, multipliers, target_indices
-                )
-                atomic_predictions += self.bond_head_last_layers[layer_index].forward(hidden, target_indices)
+        if False:
+            # if self.hypers.USE_BOND_ENERGIES and hidden_bonds is not None:
+            assert hidden_bonds.shape[-1] == self.hypers.TRANSFORMER_D_MODEL
+            atomic_predictions += self.bond_head_last_layers[-1].forward(hidden_bonds, target_indices)["atomic_predictions"]
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -763,8 +731,18 @@ class PET(torch.nn.Module):
 
         batch_dict["input_messages"] = self.embedding(neighbor_species)
 
-        for layer_index, (central_tokens_predictor, messages_predictor, gnn_layer, messages_bonds_predictor) in enumerate(
-            zip(self.central_tokens_predictors, self.messages_predictors, self.gnn_layers, self.messages_bonds_predictors)
+        for layer_index, (
+            central_tokens_predictor,
+            messages_predictor,
+            gnn_layer,
+            messages_bonds_predictor
+        ) in enumerate(
+            zip(
+                self.central_tokens_predictors,
+                self.messages_predictors,
+                self.gnn_layers,
+                self.messages_bonds_predictors
+            )
         ):
             result = gnn_layer(batch_dict)
             output_messages = result["output_messages"]
@@ -780,11 +758,23 @@ class PET(torch.nn.Module):
                 else:
                     hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
-                if self.hypers.USE_BOND_ENERGIES:
+                # if self.hypers.USE_BOND_ENERGIES:
+                if False:
                     hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
                     return hidden, hidden_bonds
                 else:
                     return hidden
+            else:
+                if "central_token" in result.keys():
+                    hidden = central_tokens_predictor.head(
+                        {"pooled": result["central_token"], 'target_indices': target_indices}
+                    )["hidden"]
+                else:
+                    hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+
+                # if self.hypers.USE_BOND_ENERGIES:
+                if False:
+                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
         raise ValueError("No last layer found")
 
