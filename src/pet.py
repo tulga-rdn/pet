@@ -376,8 +376,11 @@ class HeadWithoutLastLayer(torch.nn.Module):
 
     def forward(self, batch: Dict[str, torch.Tensor]):
         x = batch["pooled"]
+        print(f"Shape of x in HeadWithoutLastLayer: {x.shape}")
         if self.n_targets == 1:
-            return {"hidden": self.model(x)}
+            hidden = self.model(x)
+            print(f"Shape of hidden in HeadWithoutLastLayer (single target): {hidden.shape}")
+            return {"hidden": hidden}
 
         target_indices = batch['target_indices']
         if target_indices is None:
@@ -413,6 +416,7 @@ class HeadWithoutLastLayer(torch.nn.Module):
             # Place the model output in the corresponding positions in the overall output tensor
             outputs[mask] = model_output
 
+        print(f"Shape of outputs in HeadWithoutLastLayer (multi-target): {outputs.shape}")
         return {"hidden": outputs}
 
 
@@ -466,6 +470,7 @@ class HeadLastLayer(torch.nn.Module):
             # Place the model output in the corresponding positions in the overall output tensor
             outputs[mask] = model_output
 
+        print(f"Shape of outputs in HeadLastLayer (multi-target): {outputs.shape}")
         return {"atomic_predictions": outputs}
 
 
@@ -514,9 +519,10 @@ class MessagesPredictor(torch.nn.Module):
 
 
 class MessagesBondsPredictor(torch.nn.Module):
-    def __init__(self, hypers, head):
+    def __init__(self, hypers, head, head_last_layer):
         super(MessagesBondsPredictor, self).__init__()
         self.head = head
+        self.head_last_layer = head_last_layer
         self.AVERAGE_BOND_ENERGIES = hypers.AVERAGE_BOND_ENERGIES
 
     def forward(
@@ -528,9 +534,10 @@ class MessagesBondsPredictor(torch.nn.Module):
         multipliers: torch.Tensor,
         target_indices: torch.Tensor
     ):
-        predictions = self.head(
+        hidden = self.head(
             {"pooled": messages, "target_indices" : target_indices}
-        )["atomic_predictions"]
+        )["hidden"]
+        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
 
         mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
         predictions = torch.where(mask_expanded, 0.0, predictions)
@@ -541,6 +548,7 @@ class MessagesBondsPredictor(torch.nn.Module):
             result = predictions.sum(dim=1) / total_weight
         else:
             result = predictions.sum(dim=1)
+        print(f"Shape of result in MessagesBondsPredictor: {result.shape}")
         return result
 
 
@@ -633,8 +641,7 @@ class PET(torch.nn.Module):
             [MessagesPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
         )
 
-        # if hypers.USE_BOND_ENERGIES:
-        if False:
+        if hypers.USE_BOND_ENERGIES:
             bond_heads = []
             bond_head_last_layers = []
             if heads_central_specific:
@@ -658,7 +665,7 @@ class PET(torch.nn.Module):
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
             self.messages_bonds_predictors = torch.nn.ModuleList(
-                [MessagesPredictor(hypers, bond_head, bond_head_last_layer)
+                [MessagesBondsPredictor(hypers, bond_head, bond_head_last_layer)
                  for bond_head, bond_head_last_layer in zip(bond_heads, bond_head_last_layers)]
             )
         else:
@@ -668,7 +675,8 @@ class PET(torch.nn.Module):
 
         self.R_CUT = hypers.R_CUT
         self.CUTOFF_DELTA = hypers.CUTOFF_DELTA
-        self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
+        # self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
+        self.USE_BOND_ENERGIES = False
         self.TARGET_TYPE = hypers.TARGET_TYPE
         self.TARGET_AGGREGATION = hypers.TARGET_AGGREGATION
         self.N_GNN_LAYERS = hypers.N_GNN_LAYERS
@@ -686,18 +694,21 @@ class PET(torch.nn.Module):
 
         atomic_predictions = torch.zeros(1, dtype=x.dtype, device=x.device)
 
-        # TODO: hidden_bonds ?
-        # hidden, hidden_bonds = self.get_last_layer(batch_dict)
-        hidden = self.get_last_layer(batch_dict)
+        hidden, hidden_bonds = self.get_last_layer(batch_dict)
+        print(f"Final hidden shape: {hidden.shape}")
+        print(f"Final hidden_bonds shape: {hidden_bonds.shape}")
 
         if hidden is not None:
             result = self.head_last_layers[-1].forward(hidden, target_indices)
             atomic_predictions = result["atomic_predictions"]
+            print(f"Shape of atomic_predictions from hidden: {atomic_predictions.shape}")
 
-        if False:
-            # if self.hypers.USE_BOND_ENERGIES and hidden_bonds is not None:
-            assert hidden_bonds.shape[-1] == self.hypers.TRANSFORMER_D_MODEL
-            atomic_predictions += self.bond_head_last_layers[-1].forward(hidden_bonds, target_indices)["atomic_predictions"]
+        if self.USE_BOND_ENERGIES:
+            bond_predictions = self.bond_head_last_layers[-1].forward(hidden_bonds, target_indices)
+            print("bond_predictions", bond_predictions["atomic_predictions"].shape)
+
+            atomic_predictions += bond_predictions["atomic_predictions"]
+            print(f"Shape of atomic_predictions from hidden_bonds: {atomic_predictions.shape}")
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -735,6 +746,8 @@ class PET(torch.nn.Module):
         neighbors_pos = batch_dict["neighbors_pos"]
 
         batch_dict["input_messages"] = self.embedding(neighbor_species)
+        hidden = torch.zeros(1, dtype=x.dtype, device=x.device)
+        hidden_bonds = None
 
         for layer_index, (
             central_tokens_predictor,
@@ -760,31 +773,26 @@ class PET(torch.nn.Module):
 
             if layer_index == self.hypers.N_GNN_LAYERS - 1:
                 if "central_token" in result.keys():
-                    hidden = central_tokens_predictor.head(
-                        {"pooled": result["central_token"], 'target_indices': target_indices}
-                    )["hidden"]
+                    hidden += central_tokens_predictor.head({"pooled": result["central_token"], 'target_indices': target_indices})["hidden"]
                 else:
-                    hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+                    hidden += messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
-                # if self.hypers.USE_BOND_ENERGIES:
-                if False:
-                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+                if self.hypers.USE_BOND_ENERGIES:
+                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
                     return hidden, hidden_bonds
                 else:
-                    return hidden
+                    return hidden, None
+
             else:
                 if "central_token" in result.keys():
-                    hidden = central_tokens_predictor.head(
-                        {"pooled": result["central_token"], 'target_indices': target_indices}
-                    )["hidden"]
+                    hidden = central_tokens_predictor.head({"pooled": result["central_token"], 'target_indices': target_indices})["hidden"]
                 else:
                     hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
-                # if self.hypers.USE_BOND_ENERGIES:
-                if False:
-                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+                if self.hypers.USE_BOND_ENERGIES:
+                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
 
-        raise ValueError("No last layer found")
+        return hidden, hidden_bonds
 
     def forward(
         self,
