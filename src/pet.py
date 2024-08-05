@@ -675,8 +675,7 @@ class PET(torch.nn.Module):
 
         self.R_CUT = hypers.R_CUT
         self.CUTOFF_DELTA = hypers.CUTOFF_DELTA
-        # self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
-        self.USE_BOND_ENERGIES = False
+        self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
         self.TARGET_TYPE = hypers.TARGET_TYPE
         self.TARGET_AGGREGATION = hypers.TARGET_AGGREGATION
         self.N_GNN_LAYERS = hypers.N_GNN_LAYERS
@@ -694,21 +693,13 @@ class PET(torch.nn.Module):
 
         atomic_predictions = torch.zeros(1, dtype=x.dtype, device=x.device)
 
-        hidden, hidden_bonds = self.get_last_layer(batch_dict)
+        hidden = self.get_last_layer(batch_dict)
         print(f"Final hidden shape: {hidden.shape}")
-        print(f"Final hidden_bonds shape: {hidden_bonds.shape}")
 
         if hidden is not None:
             result = self.head_last_layers[-1].forward(hidden, target_indices)
             atomic_predictions = result["atomic_predictions"]
             print(f"Shape of atomic_predictions from hidden: {atomic_predictions.shape}")
-
-        if self.USE_BOND_ENERGIES:
-            bond_predictions = self.bond_head_last_layers[-1].forward(hidden_bonds, target_indices)
-            print("bond_predictions", bond_predictions["atomic_predictions"].shape)
-
-            atomic_predictions += bond_predictions["atomic_predictions"]
-            print(f"Shape of atomic_predictions from hidden_bonds: {atomic_predictions.shape}")
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -747,7 +738,6 @@ class PET(torch.nn.Module):
 
         batch_dict["input_messages"] = self.embedding(neighbor_species)
         hidden = torch.zeros(1, dtype=x.dtype, device=x.device)
-        hidden_bonds = None
 
         for layer_index, (
             central_tokens_predictor,
@@ -778,10 +768,9 @@ class PET(torch.nn.Module):
                     hidden += messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
                 if self.hypers.USE_BOND_ENERGIES:
-                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
-                    return hidden, hidden_bonds
-                else:
-                    return hidden, None
+                    hidden += messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
+
+                return hidden
 
             else:
                 if "central_token" in result.keys():
@@ -790,9 +779,9 @@ class PET(torch.nn.Module):
                     hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
 
                 if self.hypers.USE_BOND_ENERGIES:
-                    hidden_bonds = messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
+                    hidden += messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
 
-        return hidden, hidden_bonds
+        return hidden
 
     def forward(
         self,
