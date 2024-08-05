@@ -480,8 +480,7 @@ class CentralTokensPredictor(torch.nn.Module):
         hidden = self.head(
             {"pooled": central_tokens, 'target_indices' : target_indices}
         )["hidden"]
-        predictions = self.head_last_layer(hidden, target_indices
-        )["atomic_predictions"]
+        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
         return predictions
 
 
