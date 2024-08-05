@@ -624,9 +624,9 @@ class PET(torch.nn.Module):
                 heads.append(HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
                 head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
 
-        self.heads = nn.ModuleList(heads)
+        self.heads = torch.nn.ModuleList(heads)
         self.head_last_layers = torch.nn.ModuleList(head_last_layers)
-        self.central_tokens_predictors = nn.ModuleList(
+        self.central_tokens_predictors = torch.nn.ModuleList(
             [CentralTokensPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
         )
         self.messages_predictors = torch.nn.ModuleList(
@@ -650,17 +650,22 @@ class PET(torch.nn.Module):
                     )
             else:
                 for _ in range(n_gnn_layers):
-                    bond_head = HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
-                    bond_heads.append(bond_head)
+                    bond_heads.append(
+                        HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                    )
                     bond_head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
 
-            self.bond_heads = nn.ModuleList(bond_heads)
-            self.bond_head_last_layers = nn.ModuleList(bond_head_last_layers)
-            self.messages_bonds_predictors = nn.ModuleList([MessagesPredictor(hypers, bond_head, bond_head_last_layer) for bond_head, bond_head_last_layer in zip(bond_heads, bond_head_last_layers)])
+            self.bond_heads = torch.nn.ModuleList(bond_heads)
+            self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
+            self.messages_bonds_predictors = torch.nn.ModuleList(
+                [MessagesPredictor(hypers, bond_head, bond_head_last_layer)
+                 for bond_head, bond_head_last_layer in zip(bond_heads, bond_head_last_layers)]
+            )
         else:
             self.messages_bonds_predictors = torch.nn.ModuleList(
                 [NeverRun() for _ in range(n_gnn_layers)]
             )
+
         self.R_CUT = hypers.R_CUT
         self.CUTOFF_DELTA = hypers.CUTOFF_DELTA
         self.USE_BOND_ENERGIES = hypers.USE_BOND_ENERGIES
@@ -723,7 +728,7 @@ class PET(torch.nn.Module):
             target_indices = None
 
         lengths = torch.sqrt(torch.sum(x * x, dim=2) + 1e-16)
-        multipliers = cutoff_func(lengths, self.hypers.R_CUT, self.hypers.CUTOFF_DELTA)
+        multipliers = cutoff_func(lengths, self.R_CUT, self.CUTOFF_DELTA)
         multipliers[mask] = 0.0
 
         neighbors_index = batch_dict["neighbors_index"]
@@ -735,20 +740,23 @@ class PET(torch.nn.Module):
             central_tokens_predictor,
             messages_predictor,
             gnn_layer,
-            messages_bonds_predictor
+            messages_bonds_predictor,
         ) in enumerate(
             zip(
                 self.central_tokens_predictors,
                 self.messages_predictors,
                 self.gnn_layers,
-                self.messages_bonds_predictors
+                self.messages_bonds_predictors,
             )
         ):
             result = gnn_layer(batch_dict)
             output_messages = result["output_messages"]
 
-            new_input_messages = output_messages[neighbors_index, neighbors_pos]
-            batch_dict["input_messages"] = 0.5 * (batch_dict["input_messages"] + new_input_messages)
+            new_input_messages = output_messages[neighbors_index,
+                                                 neighbors_pos]
+            batch_dict["input_messages"] = 0.5 * (
+                batch_dict["input_messages"] + new_input_messages
+            )
 
             if layer_index == self.hypers.N_GNN_LAYERS - 1:
                 if "central_token" in result.keys():
@@ -778,7 +786,11 @@ class PET(torch.nn.Module):
 
         raise ValueError("No last layer found")
 
-    def forward(self, batch_dict: Dict[str, torch.Tensor], rotations: Optional[torch.Tensor] = None):
+    def forward(
+        self,
+        batch_dict: Dict[str, torch.Tensor],
+        rotations: Optional[torch.Tensor] = None
+    ):
         if rotations is not None:
             x_initial = batch_dict["x"]
             batch_dict["x"] = torch.bmm(x_initial, rotations)
