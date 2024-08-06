@@ -647,10 +647,10 @@ class PET(torch.nn.Module):
                         {str(i): HeadOutputLayer(hypers, head_n_neurons)
                          for i in range(len(all_species))}
                     )
-                    models = {
-                        str(i): Head(hypers, transformer_d_model, head_n_neurons)
-                        for i in range(len(all_species))
-                    }
+                models = {
+                    str(i): Head(hypers, transformer_d_model, head_n_neurons)
+                    for i in range(len(all_species))
+                }
             else:
                 for _ in range(n_gnn_layers):
                     bond_heads.append(
@@ -660,7 +660,7 @@ class PET(torch.nn.Module):
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
             self.messages_bonds_predictors = torch.nn.ModuleList(
-                [MessagesBondsPredictor(hypers, bond_head) for bond_head in bond_heads]
+                [MessagesBondsPredictor(hypers, head) for head in bond_heads]
             )
         else:
             self.messages_bonds_predictors = torch.nn.ModuleList(
