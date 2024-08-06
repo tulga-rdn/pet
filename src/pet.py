@@ -336,9 +336,9 @@ class CentralSpecificModel(torch.nn.Module):
         return result
 
 
-class FeedForwardWithoutLastLayer(torch.nn.Module):
+class FeedForward(torch.nn.Module):
     def __init__(self, hypers, n_in, n_neurons):
-        super(FeedForwardWithoutLastLayer, self).__init__()
+        super(FeedForward, self).__init__()
         self.hypers = hypers
         self.nn = nn.Sequential(
             nn.Linear(n_in, n_neurons),
@@ -351,9 +351,9 @@ class FeedForwardWithoutLastLayer(torch.nn.Module):
         return self.nn(x)
 
 
-class FeedForwardLastLayer(torch.nn.Module):
+class FeedForwardOutputLayer(torch.nn.Module):
     def __init__(self, hypers, n_neurons):
-        super(FeedForwardLastLayer, self).__init__()
+        super(FeedForwardOutputLayer, self).__init__()
         self.hypers = hypers
         self.nn = nn.Linear(n_neurons, hypers.D_OUTPUT)
 
@@ -361,17 +361,17 @@ class FeedForwardLastLayer(torch.nn.Module):
         return self.nn(x)
 
 
-class HeadWithoutLastLayer(torch.nn.Module):
+class Head(torch.nn.Module):
     def __init__(self, hypers, n_in, n_neurons):
-        super(HeadWithoutLastLayer, self).__init__()
+        super(Head, self).__init__()
         self.n_targets = hypers.N_TARGETS
         self.d_output = hypers.D_OUTPUT
         self.hypers = hypers
         if self.n_targets == 1:
-            self.model = FeedForwardWithoutLastLayer(hypers, n_in, n_neurons)
+            self.model = FeedForward(hypers, n_in, n_neurons)
         else:
             self.models = nn.ModuleList(
-                [FeedForwardWithoutLastLayer(hypers, n_in, n_neurons) for _ in range(self.n_targets)]
+                [FeedForward(hypers, n_in, n_neurons) for _ in range(self.n_targets)]
             )
 
     def forward(self, batch: Dict[str, torch.Tensor]):
@@ -416,17 +416,17 @@ class HeadWithoutLastLayer(torch.nn.Module):
         return {"atomic_predictions": outputs}
 
 
-class HeadLastLayer(torch.nn.Module):
+class HeadOutputLayer(torch.nn.Module):
     def __init__(self, hypers, n_neurons):
-        super(HeadLastLayer, self).__init__()
+        super(HeadOutputLayer, self).__init__()
         self.n_targets = hypers.N_TARGETS
         self.d_output = hypers.D_OUTPUT
         self.hypers = hypers
         if self.n_targets == 1:
-            self.model = FeedForwardLastLayer(hypers, n_neurons)
+            self.model = FeedForwardOutputLayer(hypers, n_neurons)
         else:
             self.models = nn.ModuleList(
-                [FeedForwardLastLayer(hypers, n_neurons) for _ in range(self.n_targets)]
+                [FeedForwardOutputLayer(hypers, n_neurons) for _ in range(self.n_targets)]
             )
 
     def forward(self, hidden: torch.Tensor, target_indices: Optional[torch.Tensor] = None):
@@ -531,7 +531,7 @@ class MessagesBondsPredictor(torch.nn.Module):
             {"pooled": messages, "target_indices" : target_indices}
         )["atomic_predictions"]
         
-        print("predictions", predictions.shape)
+        print("predictions shape", predictions.shape)
         mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
         predictions = torch.where(mask_expanded, 0.0, predictions)
 
@@ -607,22 +607,22 @@ class PET(torch.nn.Module):
         if heads_central_specific:
             for _ in range(n_gnn_layers):
                 models = {
-                    str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                    str(i): Head(hypers, transformer_d_model, head_n_neurons)
                     for i in range(len(all_species))
                 }
                 heads.append(CentralSpecificModel(models))
                 head_last_layers.append(
-                    {str(i): HeadLastLayer(hypers, head_n_neurons)
+                    {str(i): HeadOutputLayer(hypers, head_n_neurons)
                      for i in range(len(all_species))}
                 )
             models = {
-                str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                str(i): Head(hypers, transformer_d_model, head_n_neurons)
                 for i in range(len(all_species))
             }
         else:
             for _ in range(n_gnn_layers):
-                heads.append(HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
-                head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
+                heads.append(Head(hypers, transformer_d_model, head_n_neurons))
+                head_last_layers.append(HeadOutputLayer(hypers, head_n_neurons))
 
         self.heads = torch.nn.ModuleList(heads)
         self.head_last_layers = torch.nn.ModuleList(head_last_layers)
@@ -639,23 +639,23 @@ class PET(torch.nn.Module):
             if heads_central_specific:
                 for _ in range(n_gnn_layers):
                     models = {
-                        str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                        str(i): Head(hypers, transformer_d_model, head_n_neurons)
                         for i in range(len(all_species))
                     }
                     bond_heads.append(CentralSpecificModel(models))
                     bond_head_last_layers.append(
-                        {str(i): HeadLastLayer(hypers, head_n_neurons)
+                        {str(i): HeadOutputLayer(hypers, head_n_neurons)
                          for i in range(len(all_species))}
                     )
                     models = {
-                        str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                        str(i): Head(hypers, transformer_d_model, head_n_neurons)
                         for i in range(len(all_species))
                     }
             else:
                 for _ in range(n_gnn_layers):
                     bond_heads.append(
-                        HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
-                    bond_head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
+                        Head(hypers, transformer_d_model, head_n_neurons))
+                    bond_head_last_layers.append(HeadOutputLayer(hypers, head_n_neurons))
 
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
@@ -765,10 +765,10 @@ class PET(torch.nn.Module):
                     output_messages, mask, nums, central_species, multipliers, target_indices
                 )
 
-                if self.hypers.USE_BOND_ENERGIES:
-                    atomic_predictions = atomic_predictions + messages_bonds_predictor(
-                        output_messages, mask, nums, central_species, multipliers, target_indices
-                    )
+            if self.hypers.USE_BOND_ENERGIES:
+                atomic_predictions = atomic_predictions + messages_bonds_predictor(
+                    output_messages, mask, nums, central_species, multipliers, target_indices
+                )
 
             print("atomic_predictions shape", atomic_predictions.shape)
 
