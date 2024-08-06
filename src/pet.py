@@ -377,8 +377,7 @@ class HeadWithoutLastLayer(torch.nn.Module):
     def forward(self, batch: Dict[str, torch.Tensor]):
         x = batch["pooled"]
         if self.n_targets == 1:
-            hidden = self.model(x)
-            return {"atomic_predictions": hidden}
+            return {"atomic_predictions": self.model(x)}
 
         target_indices = batch['target_indices']
         if target_indices is None:
@@ -484,37 +483,6 @@ class CentralTokensPredictor(torch.nn.Module):
         return predictions
 
 
-class MessagesBondsPredictor(torch.nn.Module):
-    def __init__(self, hypers, head):
-        super(MessagesBondsPredictor, self).__init__()
-        self.head = head
-        self.AVERAGE_BOND_ENERGIES = hypers.AVERAGE_BOND_ENERGIES
-
-    def forward(
-        self,
-        messages: torch.Tensor,
-        mask: torch.Tensor,
-        nums: torch.Tensor,
-        central_species: torch.Tensor,
-        multipliers: torch.Tensor,
-        target_indices: torch.Tensor
-    ):
-        predictions = self.head(
-            {"pooled": messages, "target_indices" : target_indices}
-        )["atomic_predictions"]
-
-        mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
-        predictions = torch.where(mask_expanded, 0.0, predictions)
-
-        predictions = predictions * multipliers[:, :, None]
-        if self.AVERAGE_BOND_ENERGIES:
-            total_weight = multipliers.sum(dim=1)[:, None]
-            result = predictions.sum(dim=1) / total_weight
-        else:
-            result = predictions.sum(dim=1)
-        return result
-
-
 class MessagesPredictor(torch.nn.Module):
     def __init__(self, hypers, head):
         super(MessagesPredictor, self).__init__()
@@ -542,6 +510,38 @@ class MessagesPredictor(torch.nn.Module):
             "atomic_predictions"
         ]
         return predictions
+
+
+class MessagesBondsPredictor(torch.nn.Module):
+    def __init__(self, hypers, head):
+        super(MessagesBondsPredictor, self).__init__()
+        self.head = head
+        self.AVERAGE_BOND_ENERGIES = hypers.AVERAGE_BOND_ENERGIES
+
+    def forward(
+        self,
+        messages: torch.Tensor,
+        mask: torch.Tensor,
+        nums: torch.Tensor,
+        central_species: torch.Tensor,
+        multipliers: torch.Tensor,
+        target_indices: torch.Tensor
+    ):
+        predictions = self.head(
+            {"pooled": messages, "target_indices" : target_indices}
+        )["atomic_predictions"]
+        
+        print("predictions", predictions.shape)
+        mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
+        predictions = torch.where(mask_expanded, 0.0, predictions)
+
+        predictions = predictions * multipliers[:, :, None]
+        if self.AVERAGE_BOND_ENERGIES:
+            total_weight = multipliers.sum(dim=1)[:, None]
+            result = predictions.sum(dim=1) / total_weight
+        else:
+            result = predictions.sum(dim=1)
+        return result
 
 
 class PET(torch.nn.Module):
@@ -647,18 +647,20 @@ class PET(torch.nn.Module):
                         {str(i): HeadLastLayer(hypers, head_n_neurons)
                          for i in range(len(all_species))}
                     )
+                    models = {
+                        str(i): HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
+                        for i in range(len(all_species))
+                    }
             else:
                 for _ in range(n_gnn_layers):
                     bond_heads.append(
-                        HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons)
-                    )
+                        HeadWithoutLastLayer(hypers, transformer_d_model, head_n_neurons))
                     bond_head_last_layers.append(HeadLastLayer(hypers, head_n_neurons))
 
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
             self.messages_bonds_predictors = torch.nn.ModuleList(
-                [MessagesBondsPredictor(hypers, bond_head)
-                 for bond_head in bond_heads]
+                [MessagesBondsPredictor(hypers, bond_head) for bond_head in bond_heads]
             )
         else:
             self.messages_bonds_predictors = torch.nn.ModuleList(
@@ -730,7 +732,7 @@ class PET(torch.nn.Module):
         batch_dict["input_messages"] = self.embedding(neighbor_species)
         batch_size = x.size(0)
         d_model = self.hypers.TRANSFORMER_D_MODEL
-        hidden = torch.zeros(batch_size, d_model, dtype=x.dtype, device=x.device)
+        atomic_predictions = torch.zeros(batch_size, d_model, dtype=x.dtype, device=x.device)
 
         for layer_index, (
             central_tokens_predictor,
@@ -755,21 +757,27 @@ class PET(torch.nn.Module):
             )
 
             if "central_token" in result.keys():
-                hidden += central_tokens_predictor(result["central_token"], central_species, target_indices)
+                atomic_predictions = atomic_predictions + central_tokens_predictor(
+                    result["central_token"], central_species, target_indices
+                )
             else:
-                hidden += messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
+                atomic_predictions = atomic_predictions + messages_predictor(
+                    output_messages, mask, nums, central_species, multipliers, target_indices
+                )
 
                 if self.hypers.USE_BOND_ENERGIES:
-                    hidden += messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
+                    atomic_predictions = atomic_predictions + messages_bonds_predictor(
+                        output_messages, mask, nums, central_species, multipliers, target_indices
+                    )
 
-            print("hidden shape", hidden.shape)
+            print("atomic_predictions shape", atomic_predictions.shape)
 
-        return hidden
+        return atomic_predictions
 
     def forward(
         self,
         batch_dict: Dict[str, torch.Tensor],
-        rotations: Optional[torch.Tensor] = None
+        rotations: Optional[torch.Tensor] = None,
     ):
         if rotations is not None:
             x_initial = batch_dict["x"]
