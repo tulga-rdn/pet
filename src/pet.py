@@ -376,11 +376,9 @@ class HeadWithoutLastLayer(torch.nn.Module):
 
     def forward(self, batch: Dict[str, torch.Tensor]):
         x = batch["pooled"]
-        print(f"Shape of x in HeadWithoutLastLayer: {x.shape}")
         if self.n_targets == 1:
             hidden = self.model(x)
-            print(f"Shape of hidden in HeadWithoutLastLayer (single target): {hidden.shape}")
-            return {"hidden": hidden}
+            return {"atomic_predictions": hidden}
 
         target_indices = batch['target_indices']
         if target_indices is None:
@@ -416,8 +414,7 @@ class HeadWithoutLastLayer(torch.nn.Module):
             # Place the model output in the corresponding positions in the overall output tensor
             outputs[mask] = model_output
 
-        print(f"Shape of outputs in HeadWithoutLastLayer (multi-target): {outputs.shape}")
-        return {"hidden": outputs}
+        return {"atomic_predictions": outputs}
 
 
 class HeadLastLayer(torch.nn.Module):
@@ -470,30 +467,58 @@ class HeadLastLayer(torch.nn.Module):
             # Place the model output in the corresponding positions in the overall output tensor
             outputs[mask] = model_output
 
-        print(f"Shape of outputs in HeadLastLayer (multi-target): {outputs.shape}")
         return {"atomic_predictions": outputs}
 
 
 class CentralTokensPredictor(torch.nn.Module):
-    def __init__(self, hypers, head, head_last_layer):
+    def __init__(self, hypers, head):
         super(CentralTokensPredictor, self).__init__()
         self.head = head
-        self.head_last_layer = head_last_layer
         self.hypers = hypers
 
     def forward(self, central_tokens: torch.Tensor, central_species: torch.Tensor, target_indices: torch.Tensor):
-        hidden = self.head(
+        predictions = self.head(
             {"pooled": central_tokens, 'target_indices' : target_indices}
-        )["hidden"]
-        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
+        )["atomic_predictions"]
+        print("shape CentralTokensPredictor", predictions.shape)
         return predictions
 
 
+class MessagesBondsPredictor(torch.nn.Module):
+    def __init__(self, hypers, head):
+        super(MessagesBondsPredictor, self).__init__()
+        self.head = head
+        self.AVERAGE_BOND_ENERGIES = hypers.AVERAGE_BOND_ENERGIES
+
+    def forward(
+        self,
+        messages: torch.Tensor,
+        mask: torch.Tensor,
+        nums: torch.Tensor,
+        central_species: torch.Tensor,
+        multipliers: torch.Tensor,
+        target_indices: torch.Tensor
+    ):
+        predictions = self.head(
+            {"pooled": messages, "target_indices" : target_indices}
+        )["atomic_predictions"]
+
+        mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
+        predictions = torch.where(mask_expanded, 0.0, predictions)
+
+        predictions = predictions * multipliers[:, :, None]
+        if self.AVERAGE_BOND_ENERGIES:
+            total_weight = multipliers.sum(dim=1)[:, None]
+            result = predictions.sum(dim=1) / total_weight
+        else:
+            result = predictions.sum(dim=1)
+        return result
+
+
 class MessagesPredictor(torch.nn.Module):
-    def __init__(self, hypers, head, head_last_layer):
+    def __init__(self, hypers, head):
         super(MessagesPredictor, self).__init__()
         self.head = head
-        self.head_last_layer = head_last_layer
         self.AVERAGE_POOLING = hypers.AVERAGE_POOLING
 
     def forward(
@@ -513,43 +538,10 @@ class MessagesPredictor(torch.nn.Module):
         else:
             pooled = messages_proceed.sum(dim=1)
 
-        hidden = self.head({"pooled": pooled, 'target_indices': target_indices})["hidden"]
-        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
+        predictions = self.head({"pooled": pooled, 'target_indices' : target_indices})[
+            "atomic_predictions"
+        ]
         return predictions
-
-
-class MessagesBondsPredictor(torch.nn.Module):
-    def __init__(self, hypers, head, head_last_layer):
-        super(MessagesBondsPredictor, self).__init__()
-        self.head = head
-        self.head_last_layer = head_last_layer
-        self.AVERAGE_BOND_ENERGIES = hypers.AVERAGE_BOND_ENERGIES
-
-    def forward(
-        self,
-        messages: torch.Tensor,
-        mask: torch.Tensor,
-        nums: torch.Tensor,
-        central_species: torch.Tensor,
-        multipliers: torch.Tensor,
-        target_indices: torch.Tensor
-    ):
-        hidden = self.head(
-            {"pooled": messages, "target_indices" : target_indices}
-        )["hidden"]
-        predictions = self.head_last_layer(hidden, target_indices)["atomic_predictions"]
-
-        mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
-        predictions = torch.where(mask_expanded, 0.0, predictions)
-
-        predictions = predictions * multipliers[:, :, None]
-        if self.AVERAGE_BOND_ENERGIES:
-            total_weight = multipliers.sum(dim=1)[:, None]
-            result = predictions.sum(dim=1) / total_weight
-        else:
-            result = predictions.sum(dim=1)
-        print(f"Shape of result in MessagesBondsPredictor: {result.shape}")
-        return result
 
 
 class PET(torch.nn.Module):
@@ -635,10 +627,10 @@ class PET(torch.nn.Module):
         self.heads = torch.nn.ModuleList(heads)
         self.head_last_layers = torch.nn.ModuleList(head_last_layers)
         self.central_tokens_predictors = torch.nn.ModuleList(
-            [CentralTokensPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
+            [CentralTokensPredictor(hypers, head) for head in heads]
         )
         self.messages_predictors = torch.nn.ModuleList(
-            [MessagesPredictor(hypers, head, head_last_layer) for head, head_last_layer in zip(heads, head_last_layers)]
+            [MessagesPredictor(hypers, head) for head in heads]
         )
 
         if hypers.USE_BOND_ENERGIES:
@@ -665,8 +657,8 @@ class PET(torch.nn.Module):
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.bond_head_last_layers = torch.nn.ModuleList(bond_head_last_layers)
             self.messages_bonds_predictors = torch.nn.ModuleList(
-                [MessagesBondsPredictor(hypers, bond_head, bond_head_last_layer)
-                 for bond_head, bond_head_last_layer in zip(bond_heads, bond_head_last_layers)]
+                [MessagesBondsPredictor(hypers, bond_head)
+                 for bond_head in bond_heads]
             )
         else:
             self.messages_bonds_predictors = torch.nn.ModuleList(
@@ -693,13 +685,12 @@ class PET(torch.nn.Module):
 
         atomic_predictions = torch.zeros(1, dtype=x.dtype, device=x.device)
 
-        hidden = self.get_last_layer(batch_dict)
-        print(f"Final hidden shape: {hidden.shape}")
+        last_layers = self.get_last_layer(batch_dict)
+        print(f"final last_layers shape: {last_layers.shape}")
 
-        if hidden is not None:
-            result = self.head_last_layers[-1].forward(hidden, target_indices)
-            atomic_predictions = result["atomic_predictions"]
-            print(f"Shape of atomic_predictions from hidden: {atomic_predictions.shape}")
+        result = self.head_last_layers[-1].forward(last_layers, target_indices)
+        atomic_predictions = result["atomic_predictions"]
+        print(f"Shape of atomic_predictions from hidden: {atomic_predictions.shape}")
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -737,7 +728,9 @@ class PET(torch.nn.Module):
         neighbors_pos = batch_dict["neighbors_pos"]
 
         batch_dict["input_messages"] = self.embedding(neighbor_species)
-        hidden = torch.zeros(1, dtype=x.dtype, device=x.device)
+        batch_size = x.size(0)
+        d_model = self.hypers.TRANSFORMER_D_MODEL
+        hidden = torch.zeros(batch_size, d_model, dtype=x.dtype, device=x.device)
 
         for layer_index, (
             central_tokens_predictor,
@@ -761,25 +754,15 @@ class PET(torch.nn.Module):
                 batch_dict["input_messages"] + new_input_messages
             )
 
-            if layer_index == self.hypers.N_GNN_LAYERS - 1:
-                if "central_token" in result.keys():
-                    hidden += central_tokens_predictor.head({"pooled": result["central_token"], 'target_indices': target_indices})["hidden"]
-                else:
-                    hidden += messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
-
-                if self.hypers.USE_BOND_ENERGIES:
-                    hidden += messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
-
-                return hidden
-
+            if "central_token" in result.keys():
+                hidden += central_tokens_predictor(result["central_token"], central_species, target_indices)
             else:
-                if "central_token" in result.keys():
-                    hidden = central_tokens_predictor.head({"pooled": result["central_token"], 'target_indices': target_indices})["hidden"]
-                else:
-                    hidden = messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)["hidden"]
+                hidden += messages_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
 
                 if self.hypers.USE_BOND_ENERGIES:
                     hidden += messages_bonds_predictor(output_messages, mask, nums, central_species, multipliers, target_indices)
+
+            print("hidden shape", hidden.shape)
 
         return hidden
 
