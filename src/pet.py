@@ -479,7 +479,6 @@ class CentralTokensPredictor(torch.nn.Module):
         predictions = self.head(
             {"pooled": central_tokens, 'target_indices' : target_indices}
         )["atomic_predictions"]
-        print("shape CentralTokensPredictor", predictions.shape)
         return predictions
 
 
@@ -531,7 +530,6 @@ class MessagesBondsPredictor(torch.nn.Module):
             {"pooled": messages, "target_indices" : target_indices}
         )["atomic_predictions"]
         
-        print("predictions shape", predictions.shape)
         mask_expanded = mask[..., None].repeat(1, 1, predictions.shape[2])
         predictions = torch.where(mask_expanded, 0.0, predictions)
 
@@ -675,7 +673,6 @@ class PET(torch.nn.Module):
         self.N_GNN_LAYERS = hypers.N_GNN_LAYERS
 
     def get_predictions(self, batch_dict: Dict[str, torch.Tensor]):
-
         x = batch_dict["x"]
 
         if 'target_id' in batch_dict.keys():
@@ -685,14 +682,15 @@ class PET(torch.nn.Module):
         else:
             target_indices = None
 
-        atomic_predictions = torch.zeros(1, dtype=x.dtype, device=x.device)
+        last_layer_features, messages_bonds = self.get_last_layer(batch_dict)
 
-        last_layers = self.get_last_layer(batch_dict)
-        print(f"final last_layers shape: {last_layers.shape}")
+        batch_size = x.size(0)
+        atomic_predictions = torch.zeros(batch_size, 1, dtype=x.dtype, device=x.device)
 
-        result = self.head_last_layers[-1].forward(last_layers, target_indices)
-        atomic_predictions = result["atomic_predictions"]
-        print(f"Shape of atomic_predictions from hidden: {atomic_predictions.shape}")
+        for index, (last_layer_feature, head_last_layers) in enumerate(zip(last_layer_features, self.head_last_layers)):
+            atomic_predictions += head_last_layers(last_layer_feature)["atomic_predictions"]
+            if len(messages_bonds) != 0:
+                atomic_predictions += head_last_layers(last_layer_feature[index])["atomic_predictions"]
 
         if self.TARGET_TYPE == "structural":
             if self.TARGET_AGGREGATION == "sum":
@@ -730,9 +728,8 @@ class PET(torch.nn.Module):
         neighbors_pos = batch_dict["neighbors_pos"]
 
         batch_dict["input_messages"] = self.embedding(neighbor_species)
-        batch_size = x.size(0)
-        d_model = self.hypers.TRANSFORMER_D_MODEL
-        atomic_predictions = torch.zeros(batch_size, d_model, dtype=x.dtype, device=x.device)
+        last_layers = []
+        messages_bonds = []
 
         for layer_index, (
             central_tokens_predictor,
@@ -757,22 +754,20 @@ class PET(torch.nn.Module):
             )
 
             if "central_token" in result.keys():
-                atomic_predictions = atomic_predictions + central_tokens_predictor(
+                last_layers.append(central_tokens_predictor(
                     result["central_token"], central_species, target_indices
-                )
+                ))
             else:
-                atomic_predictions = atomic_predictions + messages_predictor(
+                last_layers.append(messages_predictor(
                     output_messages, mask, nums, central_species, multipliers, target_indices
-                )
+                ))
 
-            if self.hypers.USE_BOND_ENERGIES:
-                atomic_predictions = atomic_predictions + messages_bonds_predictor(
+            if self.USE_BOND_ENERGIES:
+                messages_bonds.append(messages_bonds_predictor(
                     output_messages, mask, nums, central_species, multipliers, target_indices
-                )
+                ))
 
-            print("atomic_predictions shape", atomic_predictions.shape)
-
-        return atomic_predictions
+        return last_layers, messages_bonds
 
     def forward(
         self,
