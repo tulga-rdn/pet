@@ -108,6 +108,8 @@ class Logger:
         self.support_missing_values = support_missing_values
 
     def update(self, predictions_now, targets_now):
+        if isinstance(predictions_now, dict):
+            predictions_now = predictions_now["prediction"]
         self.predictions.append(predictions_now.data.cpu().to(torch.float32).numpy())
         self.targets.append(targets_now.data.cpu().to(torch.float32).numpy())
 
@@ -187,6 +189,8 @@ def get_loss(predictions, targets, support_missing_values, use_shift_agnostic_lo
         else:
             return get_shift_agnostic_loss(predictions, targets)
     else:
+        if isinstance(predictions, dict):
+            predictions = predictions["prediction"]
         if support_missing_values:
             delta = predictions - targets
             mask_nan = torch.isnan(targets)
