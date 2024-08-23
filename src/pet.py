@@ -145,7 +145,8 @@ class CartesianTransformer(torch.nn.Module):
 
         self.neighbor_embedder = NeverRun()  # for torchscript
         if hypers.BLEND_NEIGHBOR_SPECIES and (not is_first):
-            self.neighbor_embedder = nn.Embedding(n_atomic_species + 1, d_model)
+            self.neighbor_embedder = nn.Embedding(
+                n_atomic_species + 1, d_model)
 
         self.add_central_token = add_central_token
 
@@ -188,7 +189,8 @@ class CartesianTransformer(torch.nn.Module):
         x = batch_dict["x"]
 
         if self.USE_LENGTH:
-            neighbor_lengths = torch.sqrt(torch.sum(x**2, dim=2) + 1e-15)[:, :, None]
+            neighbor_lengths = torch.sqrt(
+                torch.sum(x**2, dim=2) + 1e-15)[:, :, None]
         else:
             neighbor_lengths = torch.empty(
                 0, device=x.device, dtype=x.dtype
@@ -235,7 +237,8 @@ class CartesianTransformer(torch.nn.Module):
         coordinates = self.r_embedding(coordinates)
 
         if self.BLEND_NEIGHBOR_SPECIES and (not self.is_first):
-            tokens = torch.cat([coordinates, neighbor_embedding, input_messages], dim=2)
+            tokens = torch.cat(
+                [coordinates, neighbor_embedding, input_messages], dim=2)
         else:
             tokens = torch.cat([coordinates, input_messages], dim=2)
 
@@ -256,13 +259,15 @@ class CartesianTransformer(torch.nn.Module):
 
             tokens = torch.cat([central_token[:, None, :], tokens], dim=1)
 
-            submask = torch.zeros(mask.shape[0], dtype=torch.bool).to(mask.device)
+            submask = torch.zeros(
+                mask.shape[0], dtype=torch.bool).to(mask.device)
             total_mask = torch.cat([submask[:, None], mask], dim=1)
 
             lengths = torch.sqrt(torch.sum(x * x, dim=2) + 1e-16)
             multipliers = cutoff_func(lengths, self.R_CUT, self.CUTOFF_DELTA)
             sub_multipliers = torch.ones(mask.shape[0], device=mask.device)
-            multipliers = torch.cat([sub_multipliers[:, None], multipliers], dim=1)
+            multipliers = torch.cat(
+                [sub_multipliers[:, None], multipliers], dim=1)
             multipliers[total_mask] = 0.0
 
             multipliers = multipliers[:, None, :]
@@ -270,7 +275,8 @@ class CartesianTransformer(torch.nn.Module):
 
             output_messages = self.trans(
                 tokens[:, : (max_number + 1), :],
-                multipliers=multipliers[:, : (max_number + 1), : (max_number + 1)],
+                multipliers=multipliers[:, : (
+                    max_number + 1), : (max_number + 1)],
             )
             if max_number < initial_n_tokens:
                 padding = torch.zeros(
@@ -469,7 +475,8 @@ class PET(torch.nn.Module):
             add_central_tokens.append(hypers.ADD_TOKEN_FIRST)
         add_central_tokens.append(hypers.ADD_TOKEN_SECOND)
 
-        self.embedding = nn.Embedding(n_atomic_species + 1, transformer_d_model)
+        self.embedding = nn.Embedding(
+            n_atomic_species + 1, transformer_d_model)
         gnn_layers = []
         if transformers_central_specific:
             for layer_index in range(n_gnn_layers):
@@ -555,7 +562,8 @@ class PET(torch.nn.Module):
                 }
             else:
                 for _ in range(n_gnn_layers):
-                    bond_heads.append(Head(hypers, transformer_d_model, head_n_neurons))
+                    bond_heads.append(
+                        Head(hypers, transformer_d_model, head_n_neurons))
 
             self.bond_heads = torch.nn.ModuleList(bond_heads)
             self.messages_bonds_predictors = torch.nn.ModuleList(
@@ -703,7 +711,8 @@ class PETMLIPWrapper(torch.nn.Module):
         self.use_energies = use_energies
         self.use_forces = use_forces
         if self.model.pet_model.hypers.D_OUTPUT != 1:
-            raise ValueError("D_OUTPUT should be 1 for MLIP; energy is a single scalar")
+            raise ValueError(
+                "D_OUTPUT should be 1 for MLIP; energy is a single scalar")
         if self.model.pet_model.hypers.TARGET_TYPE != "structural":
             raise ValueError("TARGET_TYPE should be structural for MLIP")
         if self.model.pet_model.hypers.TARGET_AGGREGATION != "sum":
@@ -712,7 +721,8 @@ class PETMLIPWrapper(torch.nn.Module):
     def get_predictions(self, batch, augmentation):
         predictions = self.model(batch, augmentation=augmentation)
         if predictions["prediction"].shape[-1] != 1:
-            raise ValueError("D_OUTPUT should be 1 for MLIP; energy is a single scalar")
+            raise ValueError(
+                "D_OUTPUT should be 1 for MLIP; energy is a single scalar")
         # if predictions.shape[0] != batch.num_graphs:
         #    raise ValueError("model should return a single scalar per structure")
         return {
@@ -772,7 +782,8 @@ class SelfContributionsWrapper(torch.nn.Module):
         else:
             self.TARGET_TYPE = "atomic"
         if self.model.hypers.D_OUTPUT != 1:
-            raise ValueError("self contributions wrapper is made only for D_OUTPUT = 1")
+            raise ValueError(
+                "self contributions wrapper is made only for D_OUTPUT = 1")
 
     def forward(self, batch_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         predictions = self.model(batch_dict)
