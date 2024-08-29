@@ -336,10 +336,9 @@ class CentralSpecificModel(torch.nn.Module):
         return result
 
 
-class LinearAndFeatures(torch.nn.Module):
+class LinearWithFeatures(torch.nn.Module):
     def __init__(self, *args, **kwargs):
-        # A linear layer that also returns its inputs
-        super(LinearAndFeatures, self).__init__()
+        super(LinearWithFeatures, self).__init__()
         self.linear = nn.Linear(*args, **kwargs)
 
     def forward(self, x):
@@ -358,7 +357,7 @@ class Head(torch.nn.Module):
             get_activation(hypers),
             nn.Linear(n_neurons, n_neurons),
             get_activation(hypers),
-            LinearAndFeatures(n_neurons, hypers.D_OUTPUT),
+            LinearWithFeatures(n_neurons, hypers.D_OUTPUT),
         )
 
     def forward(self, batch_dict: Dict[str, torch.Tensor]):
@@ -654,7 +653,7 @@ class PET(torch.nn.Module):
                 prediction = torch_geometric.nn.global_add_pool(
                     atomic_predictions, batch=batch_dict["batch"]
                 )
-                last_layer_features = torch_geometric.nn.global_add_pool(
+                last_layer_features = torch_geometric.nn.global_mean_pool(
                     last_layer_features, batch=batch_dict["batch"]
                 )
                 return {"prediction": prediction, "last_layer_features": last_layer_features}
