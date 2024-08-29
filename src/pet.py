@@ -334,7 +334,8 @@ class CentralSpecificModel(torch.nn.Module):
 
         result = self.uniter(result, central_indices)
         return result
-    
+
+
 class LinearAndFeatures(torch.nn.Module):
     def __init__(self, *args, **kwargs):
         # A linear layer that also returns its inputs
@@ -763,6 +764,41 @@ class PETMLIPWrapper(torch.nn.Module):
             result.append(None)
 
         return result
+
+
+class PETLLFWrapper(torch.nn.Module):
+    def __init__(self, model, use_energies, use_forces):
+        super(PETLLFWrapper, self).__init__()
+        self.model = model
+        self.use_energies = use_energies
+        self.use_forces = use_forces
+
+        self._validate_model_configuration()
+
+    def _validate_model_configuration(self):
+        if self.model.pet_model.hypers.D_OUTPUT != 1:
+            raise ValueError("D_OUTPUT should be 1 for MLIP; energy is a single scalar")
+        if self.model.pet_model.hypers.TARGET_TYPE != "structural":
+            raise ValueError("TARGET_TYPE should be structural for MLIP")
+        if self.model.pet_model.hypers.TARGET_AGGREGATION != "sum":
+            raise ValueError("TARGET_AGGREGATION should be sum for MLIP")
+
+    def get_predictions(self, batch, augmentation):
+        predictions = self.model(batch, augmentation=augmentation)
+        if predictions["prediction"].shape[-1] != 1:
+            raise ValueError("D_OUTPUT should be 1 for MLIP; energy is a single scalar")
+
+        return {
+            "prediction": predictions["prediction"][..., 0],
+            "last_layer_features": predictions["last_layer_features"]
+        }
+
+    def forward(self, batch, augmentation, create_graph):
+        if self.use_forces:
+            batch.x.requires_grad = True
+
+        run_result = self.get_predictions(batch, augmentation)
+        return run_result["last_layer_features"]
 
 
 class SelfContributionsWrapper(torch.nn.Module):
