@@ -30,6 +30,7 @@ def fit_pet(
     name_of_calculation,
     device,
     output_dir,
+    checkpoint_path=None,
 ):
     TIME_SCRIPT_STARTED = time.time()
 
@@ -69,9 +70,6 @@ def fit_pet(
     np.save(f"{output_dir}/{NAME_OF_CALCULATION}/all_species.npy", all_species)
     hypers.UTILITY_FLAGS.CALCULATION_TYPE = "mlip"
     save_hypers(hypers, f"{output_dir}/{NAME_OF_CALCULATION}/hypers_used.yaml")
-
-    print(len(train_structures))
-    print(len(val_structures))
 
     train_graphs = get_pyg_graphs(
         train_structures,
@@ -139,7 +137,9 @@ def fit_pet(
     optim = get_optimizer(model, FITTING_SCHEME)
     scheduler = get_scheduler(optim, FITTING_SCHEME)
 
-    if name_to_load is not None:
+    if checkpoint_path is not None:
+        load_checkpoint(model, optim, scheduler, checkpoint_path)
+    elif name_to_load is not None:
         load_checkpoint(
             model, optim, scheduler, f"{output_dir}/{name_to_load}/checkpoint"
         )
