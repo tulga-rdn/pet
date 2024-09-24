@@ -8,6 +8,58 @@ from torch_geometric.loader import DataLoader, DataListLoader, DynamicBatchSampl
 import copy
 from scipy.special import roots_legendre
 from scipy.spatial.transform import Rotation as R
+import logging
+
+
+def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_key):
+    """
+    Logs the detailed training and validation statistics at the end of each epoch.
+
+    Parameters are the same as in the previous version, with added validation metrics.
+    """
+    
+    logging.info(f"Stats for Epoch {epoch}/{total_epochs}")
+    print(f"Learning Rate: {learning_rate:.3e}\n")
+    
+    train_energies_mae = epoch_stats[energies_key]["train"]["mae"]
+    train_energies_rmse = epoch_stats[energies_key]["train"]["rmse"]
+    train_forces_mae = epoch_stats["forces"]["train"]["mae"]
+    train_forces_rmse = epoch_stats["forces"]["train"]["rmse"]
+
+    val_energies_mae = epoch_stats[energies_key]["val"]["mae"]
+    val_energies_rmse = epoch_stats[energies_key]["val"]["rmse"]
+    val_forces_mae = epoch_stats["forces"]["val"]["mae"]
+    val_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
+
+    if energies_key == "energies per structure":
+        energies_log_key = "[per structure]"
+    elif energies_key == "energies per atom":
+        energies_log_key = "[per atom]"
+    else:
+        energies_log_key = ""
+
+    epoch_time = epoch_stats["epoch_time"]
+    total_time = epoch_stats["elapsed_time"]
+    estimated_remaining_time = epoch_stats["estimated_remaining_time"]
+
+
+    # Training metrics
+    print(f"Training Results:")
+    print(f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}")
+    print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n")
+    
+    # Validation metrics
+    print(f"Validation Results:")
+    print(f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}")
+    print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n")
+    
+    # Timing
+    print(f"Timing:")
+    print(f"  Time per epoch: {epoch_time:.2f} seconds")
+    print(f"  Total time elapsed: {total_time:.2f} seconds")
+    print(f"  Estimated remaining time: {estimated_remaining_time:.2f} seconds")
+    print("="*50)  # Divider for better readability between epochs
+    
 
 
 def get_calc_names(all_completed_calcs, current_name):

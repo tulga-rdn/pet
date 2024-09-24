@@ -4,15 +4,16 @@ import os
 import torch
 import ase.io
 import numpy as np
-from tqdm import tqdm
+import logging
 from .utilities import ModelKeeper
 import time
+import datetime
 import pickle
 from torch_geometric.nn import DataParallel
 
 from .hypers import save_hypers, set_hypers_from_files, Hypers, hypers_to_dict
 from .pet import PET, PETMLIPWrapper, PETUtilityWrapper
-from .utilities import FullLogger, get_scheduler, load_checkpoint, get_data_loaders
+from .utilities import FullLogger, get_scheduler, load_checkpoint, get_data_loaders, log_epoch_stats
 from .utilities import get_rmse, get_loss, set_reproducibility, get_calc_names
 from .utilities import get_optimizer
 from .analysis import adapt_hypers
@@ -32,7 +33,14 @@ def fit_pet(
     output_dir,
     checkpoint_path=None,
 ):
+    logging.info("Initializing PET training...")
+
     TIME_SCRIPT_STARTED = time.time()
+    value = datetime.datetime.fromtimestamp(TIME_SCRIPT_STARTED)
+    logging.info(f"Starting training at: {value.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    logging.info(f"Output directory: {output_dir}")
+    logging.info(f"Training using device: {device }")
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -56,7 +64,15 @@ def fit_pet(
         "sum"  # energy is a sum of atomic energies
     )
 
+    logging.info("Training with")
+    print(f"\tOutput dimensionality: {ARCHITECTURAL_HYPERS.D_OUTPUT}")
+    print(f"\tTarget type: {ARCHITECTURAL_HYPERS.TARGET_TYPE}")
+    print(f"\tTarget aggregation: {ARCHITECTURAL_HYPERS.TARGET_AGGREGATION}\n")
+
     set_reproducibility(FITTING_SCHEME.RANDOM_SEED, FITTING_SCHEME.CUDA_DETERMINISTIC)
+
+    logging.info(f"Setting random seed to: {FITTING_SCHEME.RANDOM_SEED}")
+    logging.info(f"CUDA is deterministic: {FITTING_SCHEME.CUDA_DETERMINISTIC}\n")
 
     adapt_hypers(FITTING_SCHEME, train_structures)
     structures = train_structures + val_structures
@@ -70,6 +86,8 @@ def fit_pet(
     np.save(f"{output_dir}/{NAME_OF_CALCULATION}/all_species.npy", all_species)
     hypers.UTILITY_FLAGS.CALCULATION_TYPE = "mlip"
     save_hypers(hypers, f"{output_dir}/{NAME_OF_CALCULATION}/hypers_used.yaml")
+
+    logging.info("Convering structures to PyG graphs...")
 
     train_graphs = get_pyg_graphs(
         train_structures,
@@ -92,6 +110,7 @@ def fit_pet(
         ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY
     )
 
+    logging.info("Pre-processing training data...")
     if MLIP_SETTINGS.USE_ENERGIES:
         self_contributions = get_self_contributions(
             MLIP_SETTINGS.ENERGY_KEY, train_structures, all_species
@@ -122,15 +141,18 @@ def fit_pet(
         train_graphs, val_graphs, FITTING_SCHEME
     )
 
+    logging.info("Initializing the model...")
     model = PET(ARCHITECTURAL_HYPERS, 0.0, len(all_species)).to(device)
     model = PETUtilityWrapper(model, FITTING_SCHEME.GLOBAL_AUG)
 
     model = PETMLIPWrapper(model, MLIP_SETTINGS.USE_ENERGIES, MLIP_SETTINGS.USE_FORCES)
     if FITTING_SCHEME.MULTI_GPU and torch.cuda.is_available():
+        logging.info(f"Using multi-GPU training on {torch.cuda.device_count()} GPUs")
         model = DataParallel(FlagsWrapper(model))
         model = model.to(torch.device("cuda:0"))
 
     if FITTING_SCHEME.MODEL_TO_START_WITH is not None:
+        logging.info(f"Loading model from: {FITTING_SCHEME.MODEL_TO_START_WITH}")
         model.load_state_dict(torch.load(FITTING_SCHEME.MODEL_TO_START_WITH))
         model = model.to(dtype=dtype)
 
@@ -138,8 +160,10 @@ def fit_pet(
     scheduler = get_scheduler(optim, FITTING_SCHEME)
 
     if checkpoint_path is not None:
+        logging.info(f"Loading model and checkpoint from: {checkpoint_path}")
         load_checkpoint(model, optim, scheduler, checkpoint_path)
     elif name_to_load is not None:
+        logging.info(f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint")
         load_checkpoint(
             model, optim, scheduler, f"{output_dir}/{name_to_load}/checkpoint"
         )
@@ -178,10 +202,14 @@ def fit_pet(
         multiplication_rmse_model_keeper = ModelKeeper()
         multiplication_mae_model_keeper = ModelKeeper()
 
-    pbar = tqdm(range(FITTING_SCHEME.EPOCH_NUM))
 
-    for epoch in pbar:
+    logging.info(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs...")
+    if FITTING_SCHEME.EPOCHS_WARMUP > 0:
+        logging.info(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup\n")
+    TIME_TRAINING_STARTED = time.time()
+    last_elapsed_time = 0
 
+    for epoch in range(1, FITTING_SCHEME.EPOCH_NUM+1):
         model.train(True)
         for batch in train_loader:
             if not FITTING_SCHEME.MULTI_GPU:
@@ -314,7 +342,6 @@ def fit_pet(
                 forces_logger.val_logger.update(predictions_forces, batch_forces)
 
         now = {}
-
         if FITTING_SCHEME.ENERGIES_LOSS == "per_structure":
             energies_key = "energies per structure"
         else:
@@ -327,7 +354,11 @@ def fit_pet(
             now["forces"] = forces_logger.flush()
         now["lr"] = scheduler.get_last_lr()
         now["epoch"] = epoch
-        now["elapsed_time"] = time.time() - TIME_SCRIPT_STARTED
+
+        now["elapsed_time"] = time.time() - TIME_TRAINING_STARTED
+        now["epoch_time"] = now["elapsed_time"] - last_elapsed_time
+        now["estimated_remaining_time"] = (now["elapsed_time"] / epoch) * (FITTING_SCHEME.EPOCH_NUM - epoch)
+        last_elapsed_time = now["elapsed_time"]        
 
         if MLIP_SETTINGS.USE_ENERGIES:
             sliding_energies_rmse = (
@@ -370,36 +401,19 @@ def fit_pet(
                     now["forces"]["val"]["rmse"],
                 ],
             )
+        last_lr = scheduler.get_last_lr()[0]
+        log_epoch_stats(epoch, FITTING_SCHEME.EPOCH_NUM, now, last_lr, energies_key)
 
-        val_mae_message = "val mae/rmse "
-        train_mae_message = "train mae/rmse "
-
-        if MLIP_SETTINGS.USE_ENERGIES:
-            val_mae_message += energies_key + ": "
-            train_mae_message += energies_key + ": "
-            val_mae_message += f" {now[energies_key]['val']['mae']}/{now[energies_key]['val']['rmse']};"
-            train_mae_message += f" {now[energies_key]['train']['mae']}/{now[energies_key]['train']['rmse']};"
-        if MLIP_SETTINGS.USE_FORCES:
-            val_mae_message += "forces per component: "
-            train_mae_message += "forces per component: "
-            val_mae_message += (
-                f" {now['forces']['val']['mae']}/{now['forces']['val']['rmse']}"
-            )
-            train_mae_message += (
-                f" {now['forces']['train']['mae']}/{now['forces']['train']['rmse']}"
-            )
-
-        pbar.set_description(
-            f"lr: {scheduler.get_last_lr()}; " + val_mae_message + train_mae_message
-        )
 
         history.append(now)
         scheduler.step()
         elapsed = time.time() - TIME_SCRIPT_STARTED
         if FITTING_SCHEME.MAX_TIME is not None:
             if elapsed > FITTING_SCHEME.MAX_TIME:
+                logging.info("Reached maximum time\n")
                 break
-
+    logging.info("Training is finished\n")
+    logging.info("Saving the model and history...")
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -446,8 +460,7 @@ def fit_pet(
 
     with open(f"{output_dir}/{NAME_OF_CALCULATION}/summary.txt", "w") as f:
         print(summary, file=f)
-
-    print("total elapsed time: ", time.time() - TIME_SCRIPT_STARTED)
+    logging.info(f"Total elapsed time: {time.time() - TIME_SCRIPT_STARTED}")
 
 
 def main():
