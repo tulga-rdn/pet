@@ -2,7 +2,7 @@ numpy
 scipy
 ase<3.23.0
 pathos
-jupyter
+tqdm
 scikit-learn
 torch
 torch_geometric
