@@ -38,9 +38,10 @@ def fit_pet(
     TIME_SCRIPT_STARTED = time.time()
     value = datetime.datetime.fromtimestamp(TIME_SCRIPT_STARTED)
     logging.info(f"Starting training at: {value.strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info(f"Training configuration:")
 
-    logging.info(f"Output directory: {output_dir}")
-    logging.info(f"Training using device: {device }")
+    print(f"Output directory: {output_dir}")
+    print(f"Training using device: {device }")
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -63,16 +64,14 @@ def fit_pet(
     ARCHITECTURAL_HYPERS.TARGET_AGGREGATION = (
         "sum"  # energy is a sum of atomic energies
     )
-
-    logging.info("Training with")
-    print(f"\tOutput dimensionality: {ARCHITECTURAL_HYPERS.D_OUTPUT}")
-    print(f"\tTarget type: {ARCHITECTURAL_HYPERS.TARGET_TYPE}")
-    print(f"\tTarget aggregation: {ARCHITECTURAL_HYPERS.TARGET_AGGREGATION}\n")
+    print(f"Output dimensionality: {ARCHITECTURAL_HYPERS.D_OUTPUT}")
+    print(f"Target type: {ARCHITECTURAL_HYPERS.TARGET_TYPE}")
+    print(f"Target aggregation: {ARCHITECTURAL_HYPERS.TARGET_AGGREGATION}")
 
     set_reproducibility(FITTING_SCHEME.RANDOM_SEED, FITTING_SCHEME.CUDA_DETERMINISTIC)
 
-    logging.info(f"Setting random seed to: {FITTING_SCHEME.RANDOM_SEED}")
-    logging.info(f"CUDA is deterministic: {FITTING_SCHEME.CUDA_DETERMINISTIC}\n")
+    print(f"Random seed: {FITTING_SCHEME.RANDOM_SEED}")
+    print(f"CUDA is deterministic: {FITTING_SCHEME.CUDA_DETERMINISTIC}")
 
     adapt_hypers(FITTING_SCHEME, train_structures)
     structures = train_structures + val_structures
@@ -160,10 +159,10 @@ def fit_pet(
     scheduler = get_scheduler(optim, FITTING_SCHEME)
 
     if checkpoint_path is not None:
-        logging.info(f"Loading model and checkpoint from: {checkpoint_path}")
+        logging.info(f"Loading model and checkpoint from: {checkpoint_path}\n")
         load_checkpoint(model, optim, scheduler, checkpoint_path)
     elif name_to_load is not None:
-        logging.info(f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint")
+        logging.info(f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint\n")
         load_checkpoint(
             model, optim, scheduler, f"{output_dir}/{name_to_load}/checkpoint"
         )
@@ -203,12 +202,12 @@ def fit_pet(
         multiplication_mae_model_keeper = ModelKeeper()
 
 
-    logging.info(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs...")
+    logging.info(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs")
     if FITTING_SCHEME.EPOCHS_WARMUP > 0:
-        logging.info(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup\n")
+        logging.info(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup")
     TIME_TRAINING_STARTED = time.time()
     last_elapsed_time = 0
-
+    print("=" * 50)
     for epoch in range(1, FITTING_SCHEME.EPOCH_NUM+1):
         model.train(True)
         for batch in train_loader:
