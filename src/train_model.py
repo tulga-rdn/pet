@@ -81,7 +81,7 @@ def fit_pet(
         ARCHITECTURAL_HYPERS.USE_LONG_RANGE,
         ARCHITECTURAL_HYPERS.K_CUT,
         ARCHITECTURAL_HYPERS.N_TARGETS > 1,
-        ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY
+        ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY,
     )
     val_graphs = get_pyg_graphs(
         val_structures,
@@ -91,7 +91,7 @@ def fit_pet(
         ARCHITECTURAL_HYPERS.USE_LONG_RANGE,
         ARCHITECTURAL_HYPERS.K_CUT,
         ARCHITECTURAL_HYPERS.N_TARGETS > 1,
-        ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY
+        ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY,
     )
 
     if MLIP_SETTINGS.USE_ENERGIES:
@@ -146,10 +146,18 @@ def fit_pet(
 
     history = []
     if MLIP_SETTINGS.USE_ENERGIES:
-        energies_logger = FullLogger(FITTING_SCHEME.SUPPORT_MISSING_VALUES, FITTING_SCHEME.USE_SHIFT_AGNOSTIC_LOSS, device)
+        energies_logger = FullLogger(
+            FITTING_SCHEME.SUPPORT_MISSING_VALUES,
+            FITTING_SCHEME.USE_SHIFT_AGNOSTIC_LOSS,
+            device,
+        )
 
     if MLIP_SETTINGS.USE_FORCES:
-        forces_logger = FullLogger(FITTING_SCHEME.SUPPORT_MISSING_VALUES, FITTING_SCHEME.USE_SHIFT_AGNOSTIC_LOSS, device)
+        forces_logger = FullLogger(
+            FITTING_SCHEME.SUPPORT_MISSING_VALUES,
+            FITTING_SCHEME.USE_SHIFT_AGNOSTIC_LOSS,
+            device,
+        )
 
     if MLIP_SETTINGS.USE_FORCES:
         val_forces = torch.cat(val_forces, dim=0)
@@ -396,6 +404,16 @@ def fit_pet(
         history.append(now)
         scheduler.step()
         elapsed = time.time() - TIME_SCRIPT_STARTED
+        if epoch > 0 and epoch % FITTING_SCHEME.CHECKPOINT_INTERVAL == 0:
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "optim_state_dict": optim.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "dtype_used": dtype2string(dtype),
+                },
+                f"{output_dir}/{NAME_OF_CALCULATION}/checkpoint_{epoch}",
+            )
         if FITTING_SCHEME.MAX_TIME is not None:
             if elapsed > FITTING_SCHEME.MAX_TIME:
                 break
@@ -475,9 +493,7 @@ def main():
     parser.add_argument(
         "name_of_calculation", help="Name of this calculation", type=str
     )
-    parser.add_argument(
-        "--gpu_id", help="ID of the GPU to use", type=int, default=0
-    )
+    parser.add_argument("--gpu_id", help="ID of the GPU to use", type=int, default=0)
     args = parser.parse_args()
 
     if torch.cuda.is_available():
