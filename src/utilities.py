@@ -17,10 +17,10 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
 
     Parameters are the same as in the previous version, with added validation metrics.
     """
-    
+
     logging.info(f"Stats for Epoch {epoch}/{total_epochs}")
     print(f"Learning Rate: {learning_rate:.3e}\n")
-    
+
     train_energies_mae = epoch_stats[energies_key]["train"]["mae"]
     train_energies_rmse = epoch_stats[energies_key]["train"]["rmse"]
     train_forces_mae = epoch_stats["forces"]["train"]["mae"]
@@ -42,24 +42,26 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
     total_time = epoch_stats["elapsed_time"]
     estimated_remaining_time = epoch_stats["estimated_remaining_time"]
 
-
     # Training metrics
     print(f"Training Results:")
-    print(f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}")
+    print(
+        f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}"
+    )
     print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n")
-    
+
     # Validation metrics
     print(f"Validation Results:")
-    print(f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}")
+    print(
+        f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}"
+    )
     print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n")
-    
+
     # Timing
     print(f"Timing:")
     print(f"  Time per epoch: {epoch_time:.2f} seconds")
     print(f"  Total time elapsed: {total_time:.2f} seconds")
     print(f"  Estimated remaining time: {estimated_remaining_time:.2f} seconds")
-    print("="*50)  # Divider for better readability between epochs
-    
+    print("=" * 50)  # Divider for better readability between epochs
 
 
 def get_calc_names(all_completed_calcs, current_name):
@@ -611,12 +613,13 @@ def string2dtype(string):
 
     raise ValueError("unknown dtype")
 
+
 def get_quadrature_predictions(batch, model, quadrature_order, dtype):
     x_initial = batch.x.clone()
     all_energies, all_forces = [], []
     rotations, weights = get_quadrature(quadrature_order)
     for rotation in rotations:
-        rotation = torch.tensor(rotation, device = batch.x.device, dtype = dtype)
+        rotation = torch.tensor(rotation, device=batch.x.device, dtype=dtype)
         batch_rotations = rotation[None, :].repeat(batch.num_nodes, 1, 1)
         batch.x = torch.bmm(x_initial, batch_rotations)
         prediction_energy, prediction_forces = model(

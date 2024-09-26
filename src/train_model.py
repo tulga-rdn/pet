@@ -13,7 +13,13 @@ from torch_geometric.nn import DataParallel
 
 from .hypers import save_hypers, set_hypers_from_files, Hypers, hypers_to_dict
 from .pet import PET, PETMLIPWrapper, PETUtilityWrapper
-from .utilities import FullLogger, get_scheduler, load_checkpoint, get_data_loaders, log_epoch_stats
+from .utilities import (
+    FullLogger,
+    get_scheduler,
+    load_checkpoint,
+    get_data_loaders,
+    log_epoch_stats,
+)
 from .utilities import get_rmse, get_loss, set_reproducibility, get_calc_names
 from .utilities import get_optimizer
 from .analysis import adapt_hypers
@@ -22,6 +28,21 @@ import argparse
 from .data_preparation import get_pyg_graphs, update_pyg_graphs, get_forces
 from .utilities import dtype2string, string2dtype
 from .pet import FlagsWrapper
+import sys
+
+logger = logging.getLogger(__name__)
+
+format = "[{asctime}][{levelname}]" + " - {message}"
+formatter = logging.Formatter(format, datefmt="%Y-%m-%d %H:%M:%S", style="{")
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+handlers = [stream_handler]
+
+logging.basicConfig(format=format, handlers=handlers, level=logging.INFO, style="{")
+logging.captureWarnings(True)
+
+for handler in handlers:
+    logger.addHandler(handler)
 
 
 def fit_pet(
@@ -162,7 +183,9 @@ def fit_pet(
         logging.info(f"Loading model and checkpoint from: {checkpoint_path}\n")
         load_checkpoint(model, optim, scheduler, checkpoint_path)
     elif name_to_load is not None:
-        logging.info(f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint\n")
+        logging.info(
+            f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint\n"
+        )
         load_checkpoint(
             model, optim, scheduler, f"{output_dir}/{name_to_load}/checkpoint"
         )
@@ -209,14 +232,13 @@ def fit_pet(
         multiplication_rmse_model_keeper = ModelKeeper()
         multiplication_mae_model_keeper = ModelKeeper()
 
-
     logging.info(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs")
     if FITTING_SCHEME.EPOCHS_WARMUP > 0:
         logging.info(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup")
     TIME_TRAINING_STARTED = time.time()
     last_elapsed_time = 0
     print("=" * 50)
-    for epoch in range(1, FITTING_SCHEME.EPOCH_NUM+1):
+    for epoch in range(1, FITTING_SCHEME.EPOCH_NUM + 1):
         model.train(True)
         for batch in train_loader:
             if not FITTING_SCHEME.MULTI_GPU:
@@ -364,8 +386,10 @@ def fit_pet(
 
         now["elapsed_time"] = time.time() - TIME_TRAINING_STARTED
         now["epoch_time"] = now["elapsed_time"] - last_elapsed_time
-        now["estimated_remaining_time"] = (now["elapsed_time"] / epoch) * (FITTING_SCHEME.EPOCH_NUM - epoch)
-        last_elapsed_time = now["elapsed_time"]        
+        now["estimated_remaining_time"] = (now["elapsed_time"] / epoch) * (
+            FITTING_SCHEME.EPOCH_NUM - epoch
+        )
+        last_elapsed_time = now["elapsed_time"]
 
         if MLIP_SETTINGS.USE_ENERGIES:
             sliding_energies_rmse = (
@@ -410,7 +434,6 @@ def fit_pet(
             )
         last_lr = scheduler.get_last_lr()[0]
         log_epoch_stats(epoch, FITTING_SCHEME.EPOCH_NUM, now, last_lr, energies_key)
-
 
         history.append(now)
         scheduler.step()
