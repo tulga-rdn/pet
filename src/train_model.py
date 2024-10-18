@@ -96,7 +96,21 @@ def fit_pet(
 
     adapt_hypers(FITTING_SCHEME, train_structures)
     structures = train_structures + val_structures
-    all_species = get_all_species(structures)
+
+    all_dataset_species = get_all_species(structures)
+
+    if FITTING_SCHEME.ALL_SPECIES_PATH is not None:
+        logging.info(f"Loading all species from: {FITTING_SCHEME.ALL_SPECIES_PATH}")
+        all_species = np.load(FITTING_SCHEME.ALL_SPECIES_PATH)
+        if not np.all(np.isin(all_dataset_species, all_species)):
+            raise ValueError(
+                "For the model fine-tuning, the set of species in the dataset "
+                "must be a subset of the set of species in the pre-trained model. "
+                "Please check, if the ALL_SPECIES_PATH is file contains all the elements "
+                "from the fine-tuning dataset."
+            )
+    else:
+        all_species = all_dataset_species
 
     name_to_load, NAME_OF_CALCULATION = get_calc_names(
         os.listdir(output_dir), name_of_calculation
@@ -132,9 +146,16 @@ def fit_pet(
 
     logging.info("Pre-processing training data...")
     if MLIP_SETTINGS.USE_ENERGIES:
-        self_contributions = get_self_contributions(
-            MLIP_SETTINGS.ENERGY_KEY, train_structures, all_species
-        )
+        if FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH is not None:
+            logging.info(
+                f"Loading self contributions from: {FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH}"
+            )
+            self_contributions = np.load(FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH)
+        else:
+            self_contributions = get_self_contributions(
+                MLIP_SETTINGS.ENERGY_KEY, train_structures, all_species
+            )
+
         np.save(
             f"{output_dir}/{NAME_OF_CALCULATION}/self_contributions.npy",
             self_contributions,
@@ -173,7 +194,9 @@ def fit_pet(
 
     if FITTING_SCHEME.MODEL_TO_START_WITH is not None:
         logging.info(f"Loading model from: {FITTING_SCHEME.MODEL_TO_START_WITH}")
-        model.load_state_dict(torch.load(FITTING_SCHEME.MODEL_TO_START_WITH))
+        model.load_state_dict(
+            torch.load(FITTING_SCHEME.MODEL_TO_START_WITH, weights_only=True)
+        )
         model = model.to(dtype=dtype)
 
     optim = get_optimizer(model, FITTING_SCHEME)
