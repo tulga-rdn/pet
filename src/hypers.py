@@ -108,6 +108,14 @@ def combine_hypers(provided_hypers, default_hypers):
                 raise ValueError(
                     "if using balanced_data_loader only atomic batch size can be provided"
                 )
+
+    if result["FITTING_SCHEME"]["MODEL_TO_START_WITH"] is not None:
+        if result["FITTING_SCHEME"]["ALL_SPECIES_PATH"] is None:
+            raise ValueError(
+                "When fine-tuning the model starting from a checkpoint [MODEL_TO_START_WITH, "
+                "the path to the all_species.npy file [ALL_SPECIES_PATH] must be provided."
+            )
+
     return result
 
 
