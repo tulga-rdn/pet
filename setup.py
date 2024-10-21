@@ -1,19 +1,30 @@
-from setuptools import setup
-from torch.utils.cpp_extension import BuildExtension, CppExtension
+
+from setuptools import setup, Extension
+from torch.utils.cpp_extension import BuildExtension, include_paths, library_paths
 
 with open("requirements.txt") as f:
     requirements = f.read().splitlines()
 
+# Collecting include and library paths
+include_dirs = include_paths()
+library_dirs = library_paths()
 
-def remove_torch_python(extension):
-    """
-    Remove ``torch_python`` from the list of libraries linked by a setuptools Extension.
-    """
-    if "torch_python" in extension.libraries:
-        extension.libraries.remove("torch_python")
+libraries = []
 
-    return extension
+libraries.append('c10')
+libraries.append('torch')
+libraries.append('torch_cpu')
 
+
+# Defining the extension module without specifying the unwanted libraries
+neighbors_convert_extension = Extension(
+    name="pet.neighbors_convert",
+    sources=["src/neighbors_convert.cpp"],
+    include_dirs=include_dirs,
+    library_dirs=library_dirs,
+    libraries=libraries,
+    language='c++',
+)
 
 setup(
     name="pet",
@@ -29,20 +40,12 @@ setup(
         ],
     },
     install_requires=requirements,
-    ext_modules=[
-        remove_torch_python(
-            CppExtension(
-                # Ensure this matches the package structure
-                name="pet.neighbors_convert",
-                sources=["src/neighbors_convert.cpp"],
-            )
-        ),
-    ],
+    ext_modules=[neighbors_convert_extension],
     cmdclass={
-        "build_ext": BuildExtension.with_options(no_python_abi_suffix=True),
+        "build_ext": BuildExtension.with_options(no_python_abi_suffix=True)
     },
     package_data={
-        "pet": ["neighbors_convert.so"],  # Ensure the shared object file is included
+        'pet': ['neighbors_convert.so'],  # Ensure the shared object file is included
     },
     include_package_data=True,
 )
