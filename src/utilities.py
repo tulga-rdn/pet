@@ -21,16 +21,6 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
     logging.info(f"Stats for Epoch {epoch}/{total_epochs}")
     print(f"Learning Rate: {learning_rate:.3e}\n")
 
-    train_energies_mae = epoch_stats[energies_key]["train"]["mae"]
-    train_energies_rmse = epoch_stats[energies_key]["train"]["rmse"]
-    train_forces_mae = epoch_stats["forces"]["train"]["mae"]
-    train_forces_rmse = epoch_stats["forces"]["train"]["rmse"]
-
-    val_energies_mae = epoch_stats[energies_key]["val"]["mae"]
-    val_energies_rmse = epoch_stats[energies_key]["val"]["rmse"]
-    val_forces_mae = epoch_stats["forces"]["val"]["mae"]
-    val_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
-
     if energies_key == "energies per structure":
         energies_log_key = "[per structure]"
     elif energies_key == "energies per atom":
@@ -44,17 +34,25 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
 
     # Training metrics
     print(f"Training Results:")
-    print(
-        f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}"
-    )
-    print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n")
-
+    if len(energies_key) != 0:
+        train_energies_mae = epoch_stats[energies_key]["train"]["mae"]
+        train_energies_rmse = epoch_stats[energies_key]["train"]["rmse"]
+        print(f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}")
+    if "forces" in epoch_stats.keys():
+        train_forces_mae = epoch_stats["forces"]["val"]["mae"]
+        train_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
+        print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n")
+    
     # Validation metrics
     print(f"Validation Results:")
-    print(
-        f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}"
-    )
-    print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n")
+    if len(energies_key) != 0:
+        val_energies_mae = epoch_stats[energies_key]["val"]["mae"]
+        val_energies_rmse = epoch_stats[energies_key]["val"]["rmse"]
+        print(f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}")
+    if "forces" in epoch_stats.keys():
+        val_forces_mae = epoch_stats["forces"]["val"]["mae"]
+        val_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
+        print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n")
 
     # Timing
     print(f"Timing:")

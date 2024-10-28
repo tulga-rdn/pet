@@ -401,6 +401,8 @@ def fit_pet(
 
         if MLIP_SETTINGS.USE_ENERGIES:
             now[energies_key] = energies_logger.flush()
+        else:
+            energies_key = ""
 
         if MLIP_SETTINGS.USE_FORCES:
             now["forces"] = forces_logger.flush()
