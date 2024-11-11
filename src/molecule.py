@@ -4,6 +4,7 @@ import numpy as np
 from torch_geometric.data import Data
 from .long_range import get_reciprocal, get_all_k, get_volume
 from matscipy.neighbours import neighbour_list as neighbor_list
+import vesin.torch
 
 class Molecule:
     def __init__(
@@ -31,6 +32,23 @@ class Molecule:
         i_list, j_list, D_list, S_list = ase.neighborlist.neighbor_list(
             "ijDS", atoms, r_cut
         )
+        pos_is = positions[i_list]
+        pos_js = positions[j_list]
+        self.distance_vector = pos_js - pos_is + S_list @ np.array(self.atoms.get_cell())
+
+        # def _get_neighbor_list(points, box, cutoff, periodic):
+        #     nl = vesin.torch.NeighborList(cutoff=cutoff, full_list=True)
+        #     i, j, shifts = nl.compute(points=points, box=box, periodic=periodic, quantities="ijS")
+        #     return {
+        #         "edge_indices": torch.stack([i, j], dim=0),
+        #         "edge_shifts": shifts,
+        #     }
+        
+        #self.valid_copy = _get_neighbor_list(torch.tensor(atoms.get_positions()), torch.tensor(np.array(self.atoms.get_cell())), r_cut, True)["edge_indices"].T
+
+        self.copy_from_egor_nl = np.stack([i_list, j_list], axis=0)
+        self.i_list = i_list
+        self.j_list = j_list
 
         self.neighbors_index = [[] for i in range(len(positions))]
         self.neighbors_shift = [[] for i in range(len(positions))]
@@ -133,6 +151,8 @@ class Molecule:
         nums = torch.tensor(nums, dtype=torch.get_default_dtype())
         mask = torch.BoolTensor(mask)
 
+        neighbor_index_for_output = neighbors_index
+
         neighbors_pos = torch.LongTensor(neighbors_pos)
         neighbors_index = torch.LongTensor(neighbors_index)
 
@@ -145,15 +165,27 @@ class Molecule:
             neighbor_species[i, : len(now)] = now
         neighbor_species = torch.LongTensor(neighbor_species)
 
+        #make this numpy lol
+        cells = []
+        for _ in range(len(self.atoms.positions)):
+            cells.append(np.array(self.atoms.get_cell()))
+
         kwargs = {
             "central_species": central_species,
             "x": relative_positions,
             "neighbor_species": neighbor_species,
             "neighbors_pos": neighbors_pos,
             "neighbors_index": neighbors_index.transpose(0, 1),
+            "neighbors_copy_from_egor_nl": [torch.from_numpy(l) for l in self.copy_from_egor_nl],
+            "i_list": self.i_list,
+            "j_list": self.j_list,
             "nums": nums,
             "mask": mask,
             "n_atoms": len(self.atoms.positions),
+            "positions": self.atoms.positions,
+            "cell": np.array(self.atoms.get_cell()),
+            "atoms": self.atoms,
+            "distance_vector": self.distance_vector,
         }
 
         if self.target_index is not None:
