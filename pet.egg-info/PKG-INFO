@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: pet
+Version: 0.0.0
+License-File: LICENSE.md
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: ase<3.23.0
+Requires-Dist: pathos
+Requires-Dist: tqdm
+Requires-Dist: scikit-learn
+Requires-Dist: torch
+Requires-Dist: torch_geometric
+Requires-Dist: matscipy
