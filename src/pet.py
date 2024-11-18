@@ -714,8 +714,8 @@ class PETMLIPWrapper(torch.nn.Module):
         self.use_energies = use_energies
         self.use_forces = use_forces
         self.calculator = PMEPotential(
-            atomic_smearing=3,
-            mesh_spacing=2,
+            atomic_smearing=1,
+            mesh_spacing=0.35,
             subtract_interior=False,
             full_neighbor_list=True,
         )

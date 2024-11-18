@@ -15,8 +15,6 @@ class Molecule:
 
         self.atoms = atoms
 
-        self.cutoff_radius = r_cut
-
         positions = self.atoms.get_positions()
         species = self.atoms.get_atomic_numbers()
 
@@ -34,6 +32,23 @@ class Molecule:
         i_list, j_list, D_list, S_list = ase.neighborlist.neighbor_list(
             "ijDS", atoms, r_cut
         )
+        pos_is = positions[i_list]
+        pos_js = positions[j_list]
+        self.distance_vector = pos_js - pos_is + S_list @ np.array(self.atoms.get_cell())
+
+        # def _get_neighbor_list(points, box, cutoff, periodic):
+        #     nl = vesin.torch.NeighborList(cutoff=cutoff, full_list=True)
+        #     i, j, shifts = nl.compute(points=points, box=box, periodic=periodic, quantities="ijS")
+        #     return {
+        #         "edge_indices": torch.stack([i, j], dim=0),
+        #         "edge_shifts": shifts,
+        #     }
+        
+        #self.valid_copy = _get_neighbor_list(torch.tensor(atoms.get_positions()), torch.tensor(np.array(self.atoms.get_cell())), r_cut, True)["edge_indices"].T
+
+        self.copy_from_egor_nl = np.stack([i_list, j_list], axis=0)
+        self.i_list = i_list
+        self.j_list = j_list
 
         self.neighbors_index = [[] for i in range(len(positions))]
         self.neighbors_shift = [[] for i in range(len(positions))]
@@ -95,14 +110,6 @@ class Molecule:
             return len(self.k_vectors)
         else:
             return None
-        
-    def _get_neighbor_list(self, points, box, periodic):
-        nl = vesin.torch.NeighborList(cutoff=self.cutoff_radius, full_list=True)
-        i, j, shifts = nl.compute(points=points, box=box, periodic=periodic, quantities="ijS")
-        return {
-            "edge_indices": torch.stack([i, j], dim=0),
-            "edge_shifts": shifts,
-        }
 
     def get_graph(self, max_num, all_species, max_num_k):
         central_species = [
@@ -158,17 +165,10 @@ class Molecule:
             neighbor_species[i, : len(now)] = now
         neighbor_species = torch.LongTensor(neighbor_species)
 
-        positions=torch.tensor(
-            self.atoms.positions,
-            requires_grad=True,
-            dtype=torch.float64,
-        )
-        cell=torch.tensor(self.atoms.cell.array, dtype=torch.float64),
-
-        neighbor_list = self._get_neighbor_list(
-            points=positions,
-            box=cell[0],
-            periodic=True)
+        #make this numpy lol
+        cells = []
+        for _ in range(len(self.atoms.positions)):
+            cells.append(np.array(self.atoms.get_cell()))
 
         kwargs = {
             "central_species": central_species,
@@ -176,12 +176,16 @@ class Molecule:
             "neighbor_species": neighbor_species,
             "neighbors_pos": neighbors_pos,
             "neighbors_index": neighbors_index.transpose(0, 1),
+            "neighbors_copy_from_egor_nl": [torch.from_numpy(l) for l in self.copy_from_egor_nl],
+            "i_list": self.i_list,
+            "j_list": self.j_list,
             "nums": nums,
             "mask": mask,
             "n_atoms": len(self.atoms.positions),
-            "positions": positions,
-            "cell": cell,
-            "neighbors_index_for_pme":neighbor_list["edge_indices"].T,
+            "positions": self.atoms.positions,
+            "cell": np.array(self.atoms.get_cell()),
+            "atoms": self.atoms,
+            "distance_vector": self.distance_vector,
         }
 
         if self.target_index is not None:

@@ -18,8 +18,8 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
     Parameters are the same as in the previous version, with added validation metrics.
     """
 
-    logging.info(f"Stats for Epoch {epoch}/{total_epochs}")
-    print(f"Learning Rate: {learning_rate:.3e}\n")
+    print(f"Stats for Epoch {epoch}/{total_epochs}",flush=True)
+    print(f"Learning Rate: {learning_rate:.3e}\n", flush=True)
 
     if energies_key == "energies per structure":
         energies_log_key = "[per structure]"
@@ -33,33 +33,33 @@ def log_epoch_stats(epoch, total_epochs, epoch_stats, learning_rate, energies_ke
     estimated_remaining_time = epoch_stats["estimated_remaining_time"]
 
     # Training metrics
-    print(f"Training Results:")
+    print(f"Training Results:", flush=True)
     if len(energies_key) != 0:
         train_energies_mae = epoch_stats[energies_key]["train"]["mae"]
         train_energies_rmse = epoch_stats[energies_key]["train"]["rmse"]
-        print(f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}")
+        print(f"  Energies {energies_log_key} MAE: {train_energies_mae:.3e}, RMSE: {train_energies_rmse:.3e}", flush=True)
     if "forces" in epoch_stats.keys():
         train_forces_mae = epoch_stats["forces"]["val"]["mae"]
         train_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
-        print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n")
+        print(f"  Forces MAE: {train_forces_mae:.3e}, RMSE: {train_forces_rmse:.3e}\n", flush=True)
     
     # Validation metrics
-    print(f"Validation Results:")
+    print(f"Validation Results:", flush=True)
     if len(energies_key) != 0:
         val_energies_mae = epoch_stats[energies_key]["val"]["mae"]
         val_energies_rmse = epoch_stats[energies_key]["val"]["rmse"]
-        print(f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}")
+        print(f"  Energies {energies_log_key} MAE: {val_energies_mae:.3e}, RMSE: {val_energies_rmse:.3e}", flush=True)
     if "forces" in epoch_stats.keys():
         val_forces_mae = epoch_stats["forces"]["val"]["mae"]
         val_forces_rmse = epoch_stats["forces"]["val"]["rmse"]
-        print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n")
+        print(f"  Forces MAE: {val_forces_mae:.3e}, RMSE: {val_forces_rmse:.3e}\n", flush=True)
 
     # Timing
-    print(f"Timing:")
-    print(f"  Time per epoch: {epoch_time:.2f} seconds")
-    print(f"  Total time elapsed: {total_time:.2f} seconds")
-    print(f"  Estimated remaining time: {estimated_remaining_time:.2f} seconds")
-    print("=" * 50)  # Divider for better readability between epochs
+    print(f"Timing:", flush=True)
+    print(f"  Time per epoch: {epoch_time:.2f} seconds", flush=True)
+    print(f"  Total time elapsed: {total_time:.2f} seconds", flush=True)
+    print(f"  Estimated remaining time: {estimated_remaining_time:.2f} seconds", flush=True)
+    print("=" * 50, flush=True)  # Divider for better readability between epochs
 
 
 def get_calc_names(all_completed_calcs, current_name):
@@ -505,25 +505,25 @@ def report_accuracy(
     if ground_truth is not None:
         print(
             f"{target_name} mae {specification}: {get_mae(predictions_mean, ground_truth, support_missing_values = support_missing_values)}"
-        )
+        , flush=True)
         print(
             f"{target_name} rmse {specification}: {get_rmse(predictions_mean, ground_truth, support_missing_values=support_missing_values)}"
-        )
+        , flush=True)
     else:
         print(
             f"ground truth target for {target_name} is not provided (or is provided with a wrong key). Thus, it is impossible to estimate the error between predictions and ground truth target"
-        )
+        , flush=True)
 
     if all_predictions.shape[0] > 1:
         predictions_std, predictions_mad = get_rotational_discrepancy(all_predictions)
         if verbose:
             print(
                 f"{target_name} rotational discrepancy mad (aka mae) {specification}: {predictions_mad}"
-            )
+            , flush=True)
 
             print(
                 f"{target_name} rotational discrepancy std (aka rmse) {specification}: {predictions_std} "
-            )
+            , flush=True)
 
     if target_type == "structural":
         if len(predictions_mean.shape) == 1:
@@ -538,10 +538,10 @@ def report_accuracy(
 
             print(
                 f"{target_name} mae per atom {specification}: {get_mae(predictions_mean_per_atom, ground_truth_per_atom, support_missing_values = support_missing_values)}"
-            )
+            , flush=True)
             print(
                 f"{target_name} rmse per atom {specification}: {get_rmse(predictions_mean_per_atom, ground_truth_per_atom, support_missing_values=support_missing_values)}"
-            )
+            , flush=True)
 
         if all_predictions.shape[0] > 1:
             if len(all_predictions.shape) == 2:
@@ -555,10 +555,10 @@ def report_accuracy(
             if verbose:
                 print(
                     f"{target_name} rotational discrepancy mad (aka mae) per atom {specification}: {predictions_mad_per_atom}"
-                )
+                , flush=True)
                 print(
                     f"{target_name} rotational discrepancy std (aka rmse) per atom {specification}: {predictions_std_per_atom} "
-                )
+                , flush=True)
 
 
 class NeverRun(torch.nn.Module):
