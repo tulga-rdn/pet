@@ -655,6 +655,7 @@ class PET(torch.nn.Module):
                 prediction = torch_geometric.nn.global_add_pool(
                     atomic_predictions, batch=batch_dict["batch"]
                 )
+                # commented cuz we need last layer features for every atom
                 # last_layer_features = torch_geometric.nn.global_mean_pool(
                 #     last_layer_features, batch=batch_dict["batch"]
                 # )
@@ -718,7 +719,7 @@ class PETMLIPWrapper(torch.nn.Module):
             subtract_interior=False,
             full_neighbor_list=True,
         )
-        self.charges_map = nn.Linear(512, 1) #maybe this isARCHITECTURAL_HYPERS.TRANSFORMER_DIM_FEEDFORWARD?
+        self.charges_map = nn.Linear(512, 1).to("cuda:0") #maybe this isARCHITECTURAL_HYPERS.TRANSFORMER_DIM_FEEDFORWARD?
 
         if self.model.pet_model.hypers.D_OUTPUT != 1:
             raise ValueError(
@@ -748,19 +749,47 @@ class PETMLIPWrapper(torch.nn.Module):
             sr_energies = predictions_dict["prediction"]
 
             last_layer_features = predictions_dict["last_layer_features"]
+            # print(f"last_layer_features0={last_layer_features.shape}", flush=True)
             last_layer_features = [t.unsqueeze(0) for t in last_layer_features]
-            charges = [self.charges_map(f) for f in last_layer_features]
-            potentials = self.calculator(
-                positions=[batch.positions],
-                charges=[charges], #already calculated
-                cell=[batch.cell],
-                neighbor_indices=[batch.neighbors_index_for_pme],
-                neighbor_distances=[d.norm(dim=-1) for d in batch.x], #distance_vectors is 'x' in graph dict?
-            )
-            lr_energies = [
-                potential * charge for potential, charge in zip(potentials, charges)
-            ]
+            # print(f"last_layer_features1={len(last_layer_features)}", flush=True)
+            # print(f"last_layer_features1={last_layer_features[9].shape}", flush=True)
+            charges = [self.charges_map(f).item() for f in last_layer_features]
+            
+            i_list = [torch.tensor(lst) for lst in batch.i_list]
+            j_list = [torch.tensor(lst) for lst in batch.j_list]
+            idx = [torch.stack([i_list[i], j_list[i]], dim=1) for i in range(len(i_list))]
+            distances = [torch.from_numpy(d).norm(dim=-1) for d in batch.distance_vector]
 
+            positions=[torch.from_numpy(arr) for arr in batch.positions]
+            charges_lst = []
+            last_len = 0
+            for lst in positions:
+                charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1))
+                last_len += len(lst)
+            # print(f"charges={charges_lst}", flush=True) 
+            
+            # print(
+            #     f"positions={[torch.from_numpy(arr) for arr in batch.positions]},\
+            #     \ncharges={charges},\
+            #     \ncharges0={charges[0]}\
+            #     \ncharges1={charges[1]}"
+            # )
+
+            potentials = self.calculator(
+                positions=positions,
+                charges=charges_lst,
+                cell=[torch.from_numpy(arr) for arr in batch.cell],
+                neighbor_indices=idx,
+                neighbor_distances=distances,
+            )
+            # print(f"potentials={potentials}", flush=True)
+            # print(f"charges={charges_lst}", flush=True)
+            lr_energies = torch.stack([
+                torch.sum(potential * charge) for potential, charge in zip(potentials, charges_lst)
+            ]).to("cuda:0")
+            
+            # print(f"lr_energies={lr_energies}", flush=True)
+            # print(f"sr_energies={sr_energies}", flush=True)
             predictions = sr_energies + lr_energies
             grads = torch.autograd.grad(
                 predictions,
@@ -781,17 +810,31 @@ class PETMLIPWrapper(torch.nn.Module):
 
             last_layer_features = predictions_dict["last_layer_features"]
             last_layer_features = [t.unsqueeze(0) for t in last_layer_features]
-            charges = [self.charges_map(f) for f in last_layer_features]
+            charges = [self.charges_map(f).item() for f in last_layer_features]
+            
+            i_list = [torch.tensor(lst) for lst in batch.i_list]
+            j_list = [torch.tensor(lst) for lst in batch.j_list]
+            idx = [torch.stack([i_list[i], j_list[i]], dim=1) for i in range(len(i_list))]
+            distances = [torch.from_numpy(d).norm(dim=-1) for d in batch.distance_vector]
+
+            positions=[torch.from_numpy(arr) for arr in batch.positions]
+            charges_lst = []
+            last_len = 0
+            for lst in positions:
+                charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1))
+                last_len += len(lst)
+
             potentials = self.calculator(
-                positions=batch.positions,
-                charges=charges, #already calculated
-                cell=batch.cell,
-                neighbor_indices=[batch.neighbors_index_for_pme],
-                neighbor_distances=[d.norm(dim=-1) for d in batch.x], #distance_vectors is 'x' in graph dict?
+                positions=positions,
+                charges=charges_lst,
+                cell=[torch.from_numpy(arr) for arr in batch.cell],
+                neighbor_indices=idx,
+                neighbor_distances=distances,
             )
-            lr_energies = [
-                potential * charge for potential, charge in zip(potentials, charges)
-            ]
+
+            lr_energies = torch.stack([
+                torch.sum(potential * charge) for potential, charge in zip(potentials, charges_lst)
+            ]).to("cuda:0")
             
             predictions = sr_energies + lr_energies
 

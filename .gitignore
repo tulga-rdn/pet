@@ -1,0 +1,17 @@
+*.egg-info/
+.vscode/
+.tox/
+build/
+*.pyc
+__pycache__/
+lightning_logs/
+/data
+.project_root
+*.run
+*.yaml
+slurm*
+.pytest_cache
+.mypy_cache
+*.ipynb
+.DS_Store
+results/

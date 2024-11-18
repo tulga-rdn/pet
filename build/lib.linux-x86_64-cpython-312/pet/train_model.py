@@ -30,6 +30,8 @@ from .utilities import dtype2string, string2dtype
 from .pet import FlagsWrapper
 import sys
 
+sys.stdout.reconfigure(line_buffering=True, write_through=True)
+
 logger = logging.getLogger(__name__)
 
 format = "[{asctime}][{levelname}]" + " - {message}"
@@ -54,15 +56,15 @@ def fit_pet(
     output_dir,
     checkpoint_path=None,
 ):
-    logging.info("Initializing PET training...")
+    print("Initializing PET training...")
 
     TIME_SCRIPT_STARTED = time.time()
     value = datetime.datetime.fromtimestamp(TIME_SCRIPT_STARTED)
-    logging.info(f"Starting training at: {value.strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info(f"Training configuration:")
+    print(f"Starting training at: {value.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print(f"Training configuration:", flush=True)
 
-    print(f"Output directory: {output_dir}")
-    print(f"Training using device: {device }")
+    print(f"Output directory: {output_dir}", flush=True)
+    print(f"Training using device: {device }", flush=True)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -85,14 +87,14 @@ def fit_pet(
     ARCHITECTURAL_HYPERS.TARGET_AGGREGATION = (
         "sum"  # energy is a sum of atomic energies
     )
-    print(f"Output dimensionality: {ARCHITECTURAL_HYPERS.D_OUTPUT}")
-    print(f"Target type: {ARCHITECTURAL_HYPERS.TARGET_TYPE}")
-    print(f"Target aggregation: {ARCHITECTURAL_HYPERS.TARGET_AGGREGATION}")
+    print(f"Output dimensionality: {ARCHITECTURAL_HYPERS.D_OUTPUT}", flush=True)
+    print(f"Target type: {ARCHITECTURAL_HYPERS.TARGET_TYPE}", flush=True)
+    print(f"Target aggregation: {ARCHITECTURAL_HYPERS.TARGET_AGGREGATION}", flush=True)
 
     set_reproducibility(FITTING_SCHEME.RANDOM_SEED, FITTING_SCHEME.CUDA_DETERMINISTIC)
 
-    print(f"Random seed: {FITTING_SCHEME.RANDOM_SEED}")
-    print(f"CUDA is deterministic: {FITTING_SCHEME.CUDA_DETERMINISTIC}")
+    print(f"Random seed: {FITTING_SCHEME.RANDOM_SEED}", flush=True)
+    print(f"CUDA is deterministic: {FITTING_SCHEME.CUDA_DETERMINISTIC}", flush=True)
 
     adapt_hypers(FITTING_SCHEME, train_structures)
     structures = train_structures + val_structures
@@ -100,7 +102,7 @@ def fit_pet(
     all_dataset_species = get_all_species(structures)
 
     if FITTING_SCHEME.ALL_SPECIES_PATH is not None:
-        logging.info(f"Loading all species from: {FITTING_SCHEME.ALL_SPECIES_PATH}")
+        print(f"Loading all species from: {FITTING_SCHEME.ALL_SPECIES_PATH}", flush=True)
         all_species = np.load(FITTING_SCHEME.ALL_SPECIES_PATH)
         if not np.all(np.isin(all_dataset_species, all_species)):
             raise ValueError(
@@ -121,7 +123,7 @@ def fit_pet(
     hypers.UTILITY_FLAGS.CALCULATION_TYPE = "mlip"
     save_hypers(hypers, f"{output_dir}/{NAME_OF_CALCULATION}/hypers_used.yaml")
 
-    logging.info("Convering structures to PyG graphs...")
+    print("Convering structures to PyG graphs...", flush=True)
 
     train_graphs = get_pyg_graphs(
         train_structures,
@@ -144,12 +146,12 @@ def fit_pet(
         ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY,
     )
 
-    logging.info("Pre-processing training data...")
+    print("Pre-processing training data...", flush=True)
     if MLIP_SETTINGS.USE_ENERGIES:
         if FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH is not None:
-            logging.info(
+            print(
                 f"Loading self contributions from: {FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH}"
-            )
+            , flush=True)
             self_contributions = np.load(FITTING_SCHEME.SELF_CONTRIBUTIONS_PATH)
         else:
             self_contributions = get_self_contributions(
@@ -182,19 +184,19 @@ def fit_pet(
         train_graphs, val_graphs, FITTING_SCHEME
     )
 
-    logging.info("Initializing the model...")
+    print("Initializing the model...", flush=True)
     model = PET(ARCHITECTURAL_HYPERS, 0.0, len(all_species)).to(device)
     model = PETUtilityWrapper(model, FITTING_SCHEME.GLOBAL_AUG)
 
     model = PETMLIPWrapper(model, MLIP_SETTINGS.USE_ENERGIES, MLIP_SETTINGS.USE_FORCES)
 
     if FITTING_SCHEME.MULTI_GPU and torch.cuda.is_available():
-        logging.info(f"Using multi-GPU training on {torch.cuda.device_count()} GPUs")
+        print(f"Using multi-GPU training on {torch.cuda.device_count()} GPUs", flush=True)
         model = DataParallel(FlagsWrapper(model))
         model = model.to(torch.device("cuda:0"))
 
     if FITTING_SCHEME.MODEL_TO_START_WITH is not None:
-        logging.info(f"Loading model from: {FITTING_SCHEME.MODEL_TO_START_WITH}")
+        print(f"Loading model from: {FITTING_SCHEME.MODEL_TO_START_WITH}", flush=True)
         model.load_state_dict(
             torch.load(FITTING_SCHEME.MODEL_TO_START_WITH, weights_only=True)
         )
@@ -204,12 +206,12 @@ def fit_pet(
     scheduler = get_scheduler(optim, FITTING_SCHEME)
 
     if checkpoint_path is not None:
-        logging.info(f"Loading model and checkpoint from: {checkpoint_path}\n")
+        print(f"Loading model and checkpoint from: {checkpoint_path}\n", flush=True)
         load_checkpoint(model, optim, scheduler, checkpoint_path)
     elif name_to_load is not None:
-        logging.info(
+        print(
             f"Loading model and checkpoint from: {output_dir}/{name_to_load}/checkpoint\n"
-        )
+        , flush=True)
         load_checkpoint(
             model, optim, scheduler, f"{output_dir}/{name_to_load}/checkpoint"
         )
@@ -256,22 +258,15 @@ def fit_pet(
         multiplication_rmse_model_keeper = ModelKeeper()
         multiplication_mae_model_keeper = ModelKeeper()
 
-    logging.info(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs")
+    print(f"Starting training for {FITTING_SCHEME.EPOCH_NUM} epochs", flush=True)
     if FITTING_SCHEME.EPOCHS_WARMUP > 0:
-        logging.info(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup")
+        print(f"Performing {FITTING_SCHEME.EPOCHS_WARMUP} epochs of LR warmup", flush=True)
     TIME_TRAINING_STARTED = time.time()
     last_elapsed_time = 0
-    print("=" * 50)
+    print("=" * 50, flush=True)
     for epoch in range(1, FITTING_SCHEME.EPOCH_NUM + 1):
         model.train(True)
         for batch in train_loader:
-            print('positions: ', batch.positions.shape, flush=True)
-            print('batch_y: ', batch.y.shape, flush=True)
-            predictions_dict = model.get_predictions(batch, augmentation=True)
-            print('last_layer_features: ', predictions_dict["last_layer_features"].shape, flush=True)
-            print("cell list len", len(batch.cell), flush=True)
-            print("cell list [0] shape", np.shape(batch.cell[0]), flush=True)
-            print("neighbors index: ", [t.unsqueeze(0) for t in batch.neighbors_index], flush=True)
             if not FITTING_SCHEME.MULTI_GPU:
                 batch.to(device)
 
@@ -283,8 +278,8 @@ def fit_pet(
                 predictions_energies, predictions_forces, last_layer_features = model(
                     batch, augmentation=True, create_graph=True
                 )
-                print('predictions_energies: ', predictions_energies.shape, flush=True)
-                print('last_layer_features: ', last_layer_features.shape, flush=True)
+                # print('predictions_energies: ', predictions_energies.shape, flush=True)
+                # print('last_layer_features: ', last_layer_features.shape, flush=True)
 
             if FITTING_SCHEME.MULTI_GPU:
                 y_list = [el.y for el in batch]
@@ -485,10 +480,10 @@ def fit_pet(
             )
         if FITTING_SCHEME.MAX_TIME is not None:
             if elapsed > FITTING_SCHEME.MAX_TIME:
-                logging.info("Reached maximum time\n")
+                print("Reached maximum time\n", flush=True)
                 break
-    logging.info("Training is finished\n")
-    logging.info("Saving the model and history...")
+    print("Training is finished\n", flush=True)
+    print("Saving the model and history...", flush=True)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -534,8 +529,8 @@ def fit_pet(
         summary += f"best both (multiplication) rmse in energies {postfix}: {multiplication_rmse_model_keeper.additional_info[0]} in forces: {multiplication_rmse_model_keeper.additional_info[1]} at epoch {multiplication_rmse_model_keeper.best_epoch}\n"
 
     with open(f"{output_dir}/{NAME_OF_CALCULATION}/summary.txt", "w") as f:
-        print(summary, file=f)
-    logging.info(f"Total elapsed time: {time.time() - TIME_SCRIPT_STARTED}")
+        print(summary, file=f, flush=True)
+    print(f"Total elapsed time: {time.time() - TIME_SCRIPT_STARTED}", flush=True)
 
 
 def main():
