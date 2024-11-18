@@ -1,9 +1,0 @@
-numpy
-scipy
-ase<3.23.0
-pathos
-tqdm
-scikit-learn
-torch
-torch_geometric
-matscipy
