@@ -8,7 +8,11 @@ from .transformer import TransformerLayer, Transformer
 from .molecule import batch_to_dict
 from .utilities import get_rotations, NeverRun
 
-from torchpme.calculators import PMEPotential
+from torchpme.calculators import EwaldCalculator
+from torchpme import InversePowerLawPotential
+
+import time
+import gc
 
 class CentralSplitter(torch.nn.Module):
     def __init__(self):
@@ -713,11 +717,14 @@ class PETMLIPWrapper(torch.nn.Module):
         self.model = model
         self.use_energies = use_energies
         self.use_forces = use_forces
-        self.calculator = PMEPotential(
-            atomic_smearing=1,
-            mesh_spacing=0.35,
-            subtract_interior=False,
+        self.calculator = EwaldCalculator(
+            potential=InversePowerLawPotential(
+                exponent=1.0,
+                smearing=1, 
+                exclusion_radius=15),
             full_neighbor_list=True,
+            lr_wavelength=0.5,
+            prefactor=14.399484341230986,    
         )
         self.charges_map = nn.Linear(512, 1).to("cuda:0") #maybe this isARCHITECTURAL_HYPERS.TRANSFORMER_DIM_FEEDFORWARD?
 
@@ -731,29 +738,10 @@ class PETMLIPWrapper(torch.nn.Module):
 
     def get_predictions(self, batch, augmentation):
         predictions = self.model(batch, augmentation=augmentation)
-        if predictions["prediction"].shape[-1] != 1:
-            raise ValueError(
-                "D_OUTPUT should be 1 for MLIP; energy is a single scalar")
-        # if predictions.shape[0] != batch.num_graphs:
-        #    raise ValueError("model should return a single scalar per structure")
-        return {
-            "prediction": predictions["prediction"][..., 0],
-            "last_layer_features": predictions["last_layer_features"],
-        }
-
-    def forward(self, batch, augmentation, create_graph):
-
-        if self.use_forces:
-            batch.x.requires_grad = True
-            predictions_dict = self.get_predictions(batch, augmentation)
-            sr_energies = predictions_dict["prediction"]
-
-            last_layer_features = predictions_dict["last_layer_features"]
-            # print(f"last_layer_features0={last_layer_features.shape}", flush=True)
-            last_layer_features = [t.unsqueeze(0) for t in last_layer_features]
-            # print(f"last_layer_features1={len(last_layer_features)}", flush=True)
-            # print(f"last_layer_features1={last_layer_features[9].shape}", flush=True)
-            charges = [self.charges_map(f).item() for f in last_layer_features]
+        device = batch.x.device
+        with torch.no_grad():
+            last_layer_features = [t.unsqueeze(0) for t in predictions["last_layer_features"]]
+            charges = [self.charges_map(f) for f in last_layer_features]
             
             i_list = [torch.tensor(lst) for lst in batch.i_list]
             j_list = [torch.tensor(lst) for lst in batch.j_list]
@@ -766,31 +754,38 @@ class PETMLIPWrapper(torch.nn.Module):
             for lst in positions:
                 charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1))
                 last_len += len(lst)
-            # print(f"charges={charges_lst}", flush=True) 
-            
-            # print(
-            #     f"positions={[torch.from_numpy(arr) for arr in batch.positions]},\
-            #     \ncharges={charges},\
-            #     \ncharges0={charges[0]}\
-            #     \ncharges1={charges[1]}"
-            # )
+            cells=[torch.from_numpy(arr) for arr in batch.cell]
+            potentials = []
 
-            potentials = self.calculator(
-                positions=positions,
-                charges=charges_lst,
-                cell=[torch.from_numpy(arr) for arr in batch.cell],
-                neighbor_indices=idx,
-                neighbor_distances=distances,
+        for position, charge, cell, neighbor_index, distance in zip(
+            positions, charges_lst, cells, idx, distances):
+            potential = self.calculator(
+                positions=position,
+                charges=charge,
+                cell=cell,
+                neighbor_indices=neighbor_index,
+                neighbor_distances=distance
             )
-            # print(f"potentials={potentials}", flush=True)
-            # print(f"charges={charges_lst}", flush=True)
+            potentials.append(potential * charge)
             lr_energies = torch.stack([
-                torch.sum(potential * charge) for potential, charge in zip(potentials, charges_lst)
+                torch.sum(potential) for potential in potentials
             ]).to("cuda:0")
-            
-            # print(f"lr_energies={lr_energies}", flush=True)
-            # print(f"sr_energies={sr_energies}", flush=True)
-            predictions = sr_energies + lr_energies
+        prediction = predictions["prediction"][..., 0] + lr_energies
+        if predictions["prediction"].shape[-1] != 1:
+            raise ValueError(
+                "D_OUTPUT should be 1 for MLIP; energy is a single scalar")
+        # if predictions.shape[0] != batch.num_graphs:
+        #    raise ValueError("model should return a single scalar per structure")
+        return {
+            "prediction": prediction,
+            "last_layer_features": predictions["last_layer_features"],
+        }
+
+    def forward(self, batch, augmentation, create_graph):
+
+        if self.use_forces:
+            batch.x.requires_grad = True
+            predictions = self.get_predictions(batch, augmentation)["prediction"]
             grads = torch.autograd.grad(
                 predictions,
                 batch.x,
@@ -805,38 +800,7 @@ class PETMLIPWrapper(torch.nn.Module):
             grads_messaged[batch.mask] = 0.0
             second = grads_messaged.sum(dim=1)
         else:
-            predictions_dict = self.get_predictions(batch, augmentation)
-            sr_energies = predictions_dict["prediction"]
-
-            last_layer_features = predictions_dict["last_layer_features"]
-            last_layer_features = [t.unsqueeze(0) for t in last_layer_features]
-            charges = [self.charges_map(f).item() for f in last_layer_features]
-            
-            i_list = [torch.tensor(lst) for lst in batch.i_list]
-            j_list = [torch.tensor(lst) for lst in batch.j_list]
-            idx = [torch.stack([i_list[i], j_list[i]], dim=1) for i in range(len(i_list))]
-            distances = [torch.from_numpy(d).norm(dim=-1) for d in batch.distance_vector]
-
-            positions=[torch.from_numpy(arr) for arr in batch.positions]
-            charges_lst = []
-            last_len = 0
-            for lst in positions:
-                charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1))
-                last_len += len(lst)
-
-            potentials = self.calculator(
-                positions=positions,
-                charges=charges_lst,
-                cell=[torch.from_numpy(arr) for arr in batch.cell],
-                neighbor_indices=idx,
-                neighbor_distances=distances,
-            )
-
-            lr_energies = torch.stack([
-                torch.sum(potential * charge) for potential, charge in zip(potentials, charges_lst)
-            ]).to("cuda:0")
-            
-            predictions = sr_energies + lr_energies
+            predictions = self.get_predictions(batch, augmentation)["prediction"]
 
         result = []
 
@@ -849,7 +813,6 @@ class PETMLIPWrapper(torch.nn.Module):
         else:
             result.append(None)
 
-        result.append(last_layer_features)
         return result
 
 
