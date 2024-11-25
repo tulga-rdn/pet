@@ -273,13 +273,11 @@ def fit_pet(
             if FITTING_SCHEME.MULTI_GPU:
                 model.module.augmentation = True
                 model.module.create_graph = True
-                predictions_energies, predictions_forces, last_layer_features = model(batch)
+                predictions_energies, predictions_forces = model(batch)
             else:
-                predictions_energies, predictions_forces, last_layer_features = model(
+                predictions_energies, predictions_forces = model(
                     batch, augmentation=True, create_graph=True
                 )
-                # print('predictions_energies: ', predictions_energies.shape, flush=True)
-                # print('last_layer_features: ', last_layer_features.shape, flush=True)
 
             if FITTING_SCHEME.MULTI_GPU:
                 y_list = [el.y for el in batch]
@@ -357,9 +355,9 @@ def fit_pet(
             if FITTING_SCHEME.MULTI_GPU:
                 model.module.augmentation = False
                 model.module.create_graph = False
-                predictions_energies, predictions_forces, last_layer_features = model(batch)
+                predictions_energies, predictions_forces = model(batch)
             else:
-                predictions_energies, predictions_forces, last_layer_features = model(
+                predictions_energies, predictions_forces = model(
                     batch, augmentation=False, create_graph=False
                 )
 
