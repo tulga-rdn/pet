@@ -1,3 +1,0 @@
-best val mae in energies per structure: 0.06780625879764557 at epoch 810
-best val rmse in energies per structure: 0.09351732581853867 at epoch 962
-
