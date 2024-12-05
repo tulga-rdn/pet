@@ -14,6 +14,10 @@ from torchpme import InversePowerLawPotential
 import time
 import gc
 
+import pickle
+from torch.profiler import profile, ProfilerActivity
+
+
 class CentralSplitter(torch.nn.Module):
     def __init__(self):
         super(CentralSplitter, self).__init__()
@@ -725,7 +729,7 @@ class PETMLIPWrapper(torch.nn.Module):
             full_neighbor_list=True,
             lr_wavelength=0.5,
             prefactor=14.399484341230986,    
-        )
+        ).to("cuda:0")
         self.charges_map = nn.Linear(512, 1).to("cuda:0") #maybe this isARCHITECTURAL_HYPERS.TRANSFORMER_DIM_FEEDFORWARD?
 
         if self.model.pet_model.hypers.D_OUTPUT != 1:
@@ -739,24 +743,24 @@ class PETMLIPWrapper(torch.nn.Module):
     def get_predictions(self, batch, augmentation):
         predictions = self.model(batch, augmentation=augmentation)
         device = batch.x.device
-        with torch.no_grad():
-            last_layer_features = [t.unsqueeze(0) for t in predictions["last_layer_features"]]
-            charges = [self.charges_map(f) for f in last_layer_features]
-            
-            i_list = [torch.tensor(lst) for lst in batch.i_list]
-            j_list = [torch.tensor(lst) for lst in batch.j_list]
-            idx = [torch.stack([i_list[i], j_list[i]], dim=1) for i in range(len(i_list))]
-            distances = [torch.from_numpy(d).norm(dim=-1) for d in batch.distance_vector]
+        # torch.cuda.synchronize()
+        # start = time.time()
+        last_layer_features = [t.unsqueeze(0) for t in predictions["last_layer_features"]]
+        charges = [self.charges_map(f).to("cuda:0") for f in last_layer_features]
+        
+        i_list = [torch.tensor(lst) for lst in batch.i_list]
+        j_list = [torch.tensor(lst) for lst in batch.j_list]
+        idx = [torch.stack([i_list[i], j_list[i]], dim=1).to("cuda:0") for i in range(len(i_list))]
+        distances = [torch.from_numpy(d).norm(dim=-1).to("cuda:0") for d in batch.distance_vector]
 
-            positions=[torch.from_numpy(arr) for arr in batch.positions]
-            charges_lst = []
-            last_len = 0
-            for lst in positions:
-                charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1))
-                last_len += len(lst)
-            cells=[torch.from_numpy(arr) for arr in batch.cell]
-            potentials = []
-
+        positions=[torch.from_numpy(arr).to("cuda:0") for arr in batch.positions]
+        charges_lst = []
+        last_len = 0
+        for lst in positions:
+            charges_lst.append(torch.tensor(charges[last_len:last_len+lst.shape[0]], dtype=torch.float64).reshape(-1,1).to("cuda:0"))
+            last_len += len(lst)
+        cells=[torch.from_numpy(arr).to("cuda:0") for arr in batch.cell]
+        potentials = []
         for position, charge, cell, neighbor_index, distance in zip(
             positions, charges_lst, cells, idx, distances):
             potential = self.calculator(
@@ -770,6 +774,48 @@ class PETMLIPWrapper(torch.nn.Module):
             lr_energies = torch.stack([
                 torch.sum(potential) for potential in potentials
             ]).to("cuda:0")
+        # torch.cuda.synchronize()
+        # end = time.time()
+        # print(end-start)
+        # with profile(
+        #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        #         record_shapes=True,
+        #         with_stack=True,
+        #         profile_memory=True,
+        #         experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True),
+        #         with_modules=True,
+        #     ) as prof:
+        #         for position, charge, cell, neighbor_index, distance in zip(
+        #             positions, charges_lst, cells, idx, distances):
+        #             potential = self.calculator(
+        #                 positions=position,
+        #                 charges=charge,
+        #                 cell=cell,
+        #                 neighbor_indices=neighbor_index,
+        #                 neighbor_distances=distance
+        #             )
+        #             potentials.append(potential * charge)
+        #             lr_energies = torch.stack([
+        #                 torch.sum(potential) for potential in potentials
+        #             ]).to("cuda:0")
+
+        # print("self_cpu_time_total:")
+        # print(
+        #     prof.key_averages(group_by_stack_n=10).table(
+        #         sort_by="self_cpu_time_total", row_limit=10
+        #     )
+        # )
+        # print()
+        # print("self_cuda_time_total:")
+        # print(
+        #     prof.key_averages(group_by_stack_n=10).table(
+        #         sort_by="self_cuda_time_total",
+        #         row_limit=10,
+        #     )
+        # )
+    
+        # prof.export_chrome_trace("./chrome_trace_test1.json")
+        # prof.export_memory_timeline("./export_memory_timeline1.html")
         prediction = predictions["prediction"][..., 0] + lr_energies
         if predictions["prediction"].shape[-1] != 1:
             raise ValueError(
@@ -782,7 +828,6 @@ class PETMLIPWrapper(torch.nn.Module):
         }
 
     def forward(self, batch, augmentation, create_graph):
-
         if self.use_forces:
             batch.x.requires_grad = True
             predictions = self.get_predictions(batch, augmentation)["prediction"]
