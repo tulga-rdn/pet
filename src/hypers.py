@@ -45,6 +45,7 @@ def combine_hypers(provided_hypers, default_hypers):
         "MLIP_SETTINGS",
         "GENERAL_TARGET_SETTINGS",
         "UTILITY_FLAGS",
+        "LONG_RANGE_SETTINGS"
     ]
 
     for key in provided_hypers.keys():
