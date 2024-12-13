@@ -3,7 +3,7 @@
 .tox/
 build/
 *.pyc
-*/__pycache__/
+__pycache__/
 lightning_logs/
 /data
 .project_root

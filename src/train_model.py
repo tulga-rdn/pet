@@ -30,8 +30,6 @@ from .utilities import dtype2string, string2dtype
 from .pet import FlagsWrapper
 import sys
 
-from torchviz import make_dot
-
 sys.stdout.reconfigure(line_buffering=True, write_through=True)
 
 logger = logging.getLogger(__name__)
@@ -280,7 +278,6 @@ def fit_pet(
                 predictions_energies, predictions_forces = model(
                     batch, augmentation=True, create_graph=True
                 )
-                #make_dot(predictions_energies, params=dict(list(model.named_parameters()))).render("torchviz_test", format="png")
 
             if FITTING_SCHEME.MULTI_GPU:
                 y_list = [el.y for el in batch]
@@ -535,7 +532,6 @@ def fit_pet(
 
 
 def main():
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument(

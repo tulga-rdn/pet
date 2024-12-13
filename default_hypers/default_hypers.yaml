@@ -57,6 +57,15 @@ FITTING_SCHEME:
   ENERGIES_LOSS: per_structure # per_structure or per_atom
   CHECKPOINT_INTERVAL: 100
 
+LONG_RANGE_SETTINGS: # torchPME settings
+  FULL_NEIGHBOUR_LIST: False
+  PREFACTOR: 14.
+  CHARGE_CHANNELS: 1
+  ATOMIC_SMEARING: 1.
+  LR_WAVELENGTH: 0.5
+  SUBTRACT_INTERIOR: true
+  EXPONENT: 1.0
+
 MLIP_SETTINGS: # only used when fitting MLIP
   ENERGY_KEY: energy
   FORCES_KEY: forces
