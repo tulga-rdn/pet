@@ -7,3 +7,4 @@ scikit-learn
 torch
 torch_geometric
 matscipy
+torch-pme
