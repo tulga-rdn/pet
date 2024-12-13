@@ -76,6 +76,7 @@ def fit_pet(
     FITTING_SCHEME = hypers.FITTING_SCHEME
     MLIP_SETTINGS = hypers.MLIP_SETTINGS
     ARCHITECTURAL_HYPERS = hypers.ARCHITECTURAL_HYPERS
+    LONG_RANGE_SETTINGS = hypers.LONG_RANGE_SETTINGS
 
     if FITTING_SCHEME.USE_SHIFT_AGNOSTIC_LOSS:
         raise ValueError(
@@ -188,7 +189,7 @@ def fit_pet(
     model = PET(ARCHITECTURAL_HYPERS, 0.0, len(all_species)).to(device)
     model = PETUtilityWrapper(model, FITTING_SCHEME.GLOBAL_AUG)
 
-    model = PETMLIPWrapper(model, MLIP_SETTINGS.USE_ENERGIES, MLIP_SETTINGS.USE_FORCES)
+    model = PETMLIPWrapper(model, MLIP_SETTINGS.USE_ENERGIES, MLIP_SETTINGS.USE_FORCES, LONG_RANGE_SETTINGS, device)
 
     if FITTING_SCHEME.MULTI_GPU and torch.cuda.is_available():
         print(f"Using multi-GPU training on {torch.cuda.device_count()} GPUs", flush=True)
@@ -532,6 +533,7 @@ def fit_pet(
 
 
 def main():
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
