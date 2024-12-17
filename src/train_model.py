@@ -30,8 +30,6 @@ from .utilities import dtype2string, string2dtype
 from .pet import FlagsWrapper
 import sys
 
-from torchviz import make_dot
-
 sys.stdout.reconfigure(line_buffering=True, write_through=True)
 
 logger = logging.getLogger(__name__)
@@ -192,6 +190,9 @@ def fit_pet(
 
     model = PETMLIPWrapper(model, MLIP_SETTINGS.USE_ENERGIES, MLIP_SETTINGS.USE_FORCES)
 
+    for name, param in model.named_parameters():
+        print(name, param.requires_grad)
+
     if FITTING_SCHEME.MULTI_GPU and torch.cuda.is_available():
         print(f"Using multi-GPU training on {torch.cuda.device_count()} GPUs", flush=True)
         model = DataParallel(FlagsWrapper(model))
@@ -280,7 +281,6 @@ def fit_pet(
                 predictions_energies, predictions_forces = model(
                     batch, augmentation=True, create_graph=True
                 )
-                #make_dot(predictions_energies, params=dict(list(model.named_parameters()))).render("torchviz_test", format="png")
 
             if FITTING_SCHEME.MULTI_GPU:
                 y_list = [el.y for el in batch]
@@ -559,6 +559,11 @@ def main():
     parser.add_argument(
         "name_of_calculation", help="Name of this calculation", type=str
     )
+
+    parser.add_argument(
+        "--checkpoint", help="checkpoint path", type=str, default=None
+    )
+
     parser.add_argument("--gpu_id", help="ID of the GPU to use", type=int, default=0)
     args = parser.parse_args()
 
@@ -574,7 +579,7 @@ def main():
 
     name_of_calculation = args.name_of_calculation
 
-    output_dir = "results"
+    output_dir = "/scratch/izar/sodjarga/results"
 
     hypers_dict = hypers_to_dict(hypers)
     fit_pet(
@@ -584,6 +589,7 @@ def main():
         name_of_calculation,
         device,
         output_dir,
+        args.checkpoint
     )
 
 

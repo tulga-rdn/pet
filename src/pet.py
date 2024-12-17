@@ -725,10 +725,10 @@ class PETMLIPWrapper(torch.nn.Module):
             potential=InversePowerLawPotential(
                 exponent=1.0,
                 smearing=1, 
-                exclusion_radius=15),
-            full_neighbor_list=True,
+                exclusion_radius=3),
+            full_neighbor_list=False,
             lr_wavelength=0.5,
-            prefactor=14.399484341230986,    
+            prefactor=1,    
         ).to("cuda:0")
         self.charges_map = nn.Linear(512, 1).to("cuda:0") #maybe this isARCHITECTURAL_HYPERS.TRANSFORMER_DIM_FEEDFORWARD?
 
@@ -742,11 +742,28 @@ class PETMLIPWrapper(torch.nn.Module):
 
     def get_predictions(self, batch, augmentation):
         predictions = self.model(batch, augmentation=augmentation)
-        device = batch.x.device
-        # torch.cuda.synchronize()
-        # start = time.time()
         last_layer_features = [t.unsqueeze(0) for t in predictions["last_layer_features"]]
         charges = [self.charges_map(f).to("cuda:0") for f in last_layer_features]
+                
+        print("LLF: ", torch.sum(torch.cat(last_layer_features, dim=0)))
+        
+        print("Charges: ", flush=True)
+        print(charges, flush=True)
+
+        # projection = torch.nn.Sequential(
+        #     torch.nn.Linear(1, 256),
+        #     torch.nn.GELU(),
+        # )
+        # nn_map = torch.nn.ModuleList(
+        #     [
+        #         torch.nn.Sequential(
+        #             torch.nn.Linear(256, 256),
+        #             torch.nn.GELU(),
+        #         )
+        #         for i in range(2)
+        #     ]
+        # )
+        # long_range_energy_map = torch.nn.Linear(256, 1)
         
         i_list = [torch.tensor(lst) for lst in batch.i_list]
         j_list = [torch.tensor(lst) for lst in batch.j_list]
@@ -769,53 +786,19 @@ class PETMLIPWrapper(torch.nn.Module):
                 cell=cell,
                 neighbor_indices=neighbor_index,
                 neighbor_distances=distance
-            )
+            ).to("cuda:0")
             potentials.append(potential * charge)
-            lr_energies = torch.stack([
-                torch.sum(potential) for potential in potentials
-            ]).to("cuda:0")
-        # torch.cuda.synchronize()
-        # end = time.time()
-        # print(end-start)
-        # with profile(
-        #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        #         record_shapes=True,
-        #         with_stack=True,
-        #         profile_memory=True,
-        #         experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True),
-        #         with_modules=True,
-        #     ) as prof:
-        #         for position, charge, cell, neighbor_index, distance in zip(
-        #             positions, charges_lst, cells, idx, distances):
-        #             potential = self.calculator(
-        #                 positions=position,
-        #                 charges=charge,
-        #                 cell=cell,
-        #                 neighbor_indices=neighbor_index,
-        #                 neighbor_distances=distance
-        #             )
-        #             potentials.append(potential * charge)
-        #             lr_energies = torch.stack([
-        #                 torch.sum(potential) for potential in potentials
-        #             ]).to("cuda:0")
+        lr_energies = torch.stack([
+            torch.sum(potential) for potential in potentials
+        ]).to("cuda:0")
+            # nn_features = []
+            # for f in potentials:
+            #     f = projection(f)
+            #     for layer in nn_map:
+            #         f = layer(f)
+            #     nn_features.append(f)
+            # lr_energies = [long_range_energy_map(f)for f in nn_features]
 
-        # print("self_cpu_time_total:")
-        # print(
-        #     prof.key_averages(group_by_stack_n=10).table(
-        #         sort_by="self_cpu_time_total", row_limit=10
-        #     )
-        # )
-        # print()
-        # print("self_cuda_time_total:")
-        # print(
-        #     prof.key_averages(group_by_stack_n=10).table(
-        #         sort_by="self_cuda_time_total",
-        #         row_limit=10,
-        #     )
-        # )
-    
-        # prof.export_chrome_trace("./chrome_trace_test1.json")
-        # prof.export_memory_timeline("./export_memory_timeline1.html")
         prediction = predictions["prediction"][..., 0] + lr_energies
         if predictions["prediction"].shape[-1] != 1:
             raise ValueError(
