@@ -125,6 +125,7 @@ def fit_pet(
     save_hypers(hypers, f"{output_dir}/{NAME_OF_CALCULATION}/hypers_used.yaml")
 
     print("Convering structures to PyG graphs...", flush=True)
+    print(len(train_structures))
 
     train_graphs = get_pyg_graphs(
         train_structures,
@@ -557,6 +558,9 @@ def main():
     parser.add_argument(
         "name_of_calculation", help="Name of this calculation", type=str
     )
+    parser.add_argument(
+        "--checkpoint", help="checkpoint path", type=str, default=None
+    )
     parser.add_argument("--gpu_id", help="ID of the GPU to use", type=int, default=0)
     args = parser.parse_args()
 
@@ -572,7 +576,7 @@ def main():
 
     name_of_calculation = args.name_of_calculation
 
-    output_dir = "results"
+    output_dir = "/scratch/izar/sodjarga/results"
 
     hypers_dict = hypers_to_dict(hypers)
     fit_pet(
@@ -582,6 +586,7 @@ def main():
         name_of_calculation,
         device,
         output_dir,
+        args.checkpoint
     )
 
 

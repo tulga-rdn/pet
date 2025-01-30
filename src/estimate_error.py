@@ -91,6 +91,8 @@ def main():
     FITTING_SCHEME = hypers.FITTING_SCHEME
 
     ARCHITECTURAL_HYPERS = hypers.ARCHITECTURAL_HYPERS
+        
+    LONG_RANGE_SETTINGS = hypers.LONG_RANGE_SETTINGS
 
     # set_reproducibility(FITTING_SCHEME.RANDOM_SEED, FITTING_SCHEME.CUDA_DETERMINISTIC)
 
@@ -122,7 +124,8 @@ def main():
 
     if hypers.UTILITY_FLAGS.CALCULATION_TYPE == "mlip":
         model = PETMLIPWrapper(
-            model, hypers.MLIP_SETTINGS.USE_ENERGIES, hypers.MLIP_SETTINGS.USE_FORCES
+            model, hypers.MLIP_SETTINGS.USE_ENERGIES, hypers.MLIP_SETTINGS.USE_FORCES,
+            LONG_RANGE_SETTINGS, device
         )
 
     if FITTING_SCHEME.MULTI_GPU and torch.cuda.is_available():
