@@ -26,7 +26,7 @@ ARCHITECTURAL_HYPERS:
   USE_LONG_RANGE: False
   K_CUT: None # should be float; only used when USE_LONG_RANGE is True
   K_CUT_DELTA: None
-  DTYPE: float32 # float32 or float16 or bfloat16
+  DTYPE: float64 # float32 or float16 or bfloat16
   N_TARGETS: 1
   TARGET_INDEX_KEY: target_index
   RESIDUAL_FACTOR: 0.5
