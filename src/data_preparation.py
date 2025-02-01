@@ -32,14 +32,12 @@ def get_pyg_graphs(
     all_species,
     R_CUT,
     USE_ADDITIONAL_SCALAR_ATTRIBUTES,
-    USE_LONG_RANGE,
-    K_CUT,
     MULTI_TARGET,
     TARGET_INDEX_KEY
 ):
     molecules = [
         Molecule(
-            structure, R_CUT, USE_ADDITIONAL_SCALAR_ATTRIBUTES, USE_LONG_RANGE, K_CUT, MULTI_TARGET, TARGET_INDEX_KEY
+            structure, R_CUT, USE_ADDITIONAL_SCALAR_ATTRIBUTES, MULTI_TARGET, TARGET_INDEX_KEY
         )
         for structure in structures
     ]
@@ -47,14 +45,8 @@ def get_pyg_graphs(
     max_nums = [molecule.get_max_num() for molecule in molecules]
     max_num = np.max(max_nums)
 
-    if USE_LONG_RANGE:
-        k_nums = [molecule.get_num_k() for molecule in molecules]
-        max_k_num = np.max(k_nums)
-    else:
-        max_k_num = None
-
     pyg_graphs = [
-        molecule.get_graph(max_num, all_species, max_k_num)
+        molecule.get_graph(max_num, all_species)
         for molecule in molecules
     ]
     return pyg_graphs

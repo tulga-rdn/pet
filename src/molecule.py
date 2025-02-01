@@ -2,12 +2,12 @@ import torch
 import ase.io
 import numpy as np
 from torch_geometric.data import Data
-from .long_range import get_reciprocal, get_all_k, get_volume
 from matscipy.neighbours import neighbour_list as neighbor_list
+import vesin.torch
 
 class Molecule:
     def __init__(
-        self, atoms, r_cut, use_additional_scalar_attributes, use_long_range, k_cut, multi_target, target_index_key
+        self, atoms, r_cut, use_additional_scalar_attributes, multi_target, target_index_key
     ):
 
         self.use_additional_scalar_attributes = use_additional_scalar_attributes
@@ -28,20 +28,26 @@ class Molecule:
 
             self.central_scalar_attributes = scalar_attributes
 
-        i_list, j_list, D_list, S_list = ase.neighborlist.neighbor_list(
-            "ijDS", atoms, r_cut
+        # i_list, j_list, D_list, S_list = ase.neighborlist.neighbor_list(
+        #     "ijDS", atoms, r_cut
+        # )
+        self.positions_tensor = torch.tensor(
+            positions,
+            requires_grad=True,
+            dtype=torch.float64,
         )
-        pos_is = positions[i_list]
-        pos_js = positions[j_list]
-        self.distance_vector = pos_js - pos_is + S_list @ np.array(self.atoms.get_cell())
+        self.box = torch.tensor(self.atoms.cell.array, dtype=torch.float64)
+        nl = vesin.torch.NeighborList(cutoff=r_cut, full_list=True)
+        self.i_list, self.j_list, D_list, S_list = nl.compute(points=self.positions_tensor, box=self.box, periodic=self.atoms.pbc[0], quantities="ijDS")
 
-        self.i_list = i_list
-        self.j_list = j_list
+        pos_is = self.positions_tensor[self.i_list]
+        pos_js = self.positions_tensor[self.j_list]
+        self.distance_vector = pos_js - pos_is + S_list.type(torch.float64) @ self.box
 
         self.neighbors_index = [[] for i in range(len(positions))]
         self.neighbors_shift = [[] for i in range(len(positions))]
 
-        for i, j, D, S in zip(i_list, j_list, D_list, S_list):
+        for i, j, D, S in zip(self.i_list, self.j_list, D_list, S_list):
             self.neighbors_index[i].append(j)
             self.neighbors_shift[i].append(S)
 
@@ -58,7 +64,7 @@ class Molecule:
                     return False
             return True
 
-        for i, j, D, S in zip(i_list, j_list, D_list, S_list):
+        for i, j, D, S in zip(self.i_list, self.j_list, D_list.detach(), S_list):
             self.relative_positions[i].append(D)
             self.neighbor_species[i].append(species[j])
             if use_additional_scalar_attributes:
@@ -68,18 +74,6 @@ class Molecule:
                     self.neighbors_shift[j][k], -S
                 ):
                     self.neighbors_pos[i].append(k)
-
-        self.use_long_range = use_long_range
-        if self.use_long_range:
-            self.cell = np.array(self.atoms.get_cell())
-            w_1, w_2, w_3 = get_reciprocal(self.cell[0], self.cell[1], self.cell[2])
-            reciprocal = np.concatenate(
-                [w_1[np.newaxis], w_2[np.newaxis], w_3[np.newaxis]], axis=0
-            )
-            self.reciprocal = reciprocal
-            self.k_vectors = get_all_k(self.cell[0], self.cell[1], self.cell[2], k_cut)
-            self.k_cut = k_cut
-            self.volume = get_volume(self.cell[0], self.cell[1], self.cell[2])
 
         if multi_target:
             self.target_index = int(self.atoms.info[target_index_key])
@@ -93,13 +87,7 @@ class Molecule:
                 maximum = len(chunk)
         return maximum
 
-    def get_num_k(self):
-        if self.use_long_range:
-            return len(self.k_vectors)
-        else:
-            return None
-
-    def get_graph(self, max_num, all_species, max_num_k):
+    def get_graph(self, max_num, all_species):
         central_species = [
             np.where(all_species == specie)[0][0] for specie in self.central_species
         ]
@@ -134,7 +122,7 @@ class Molecule:
 
         mask = np.concatenate(mask, axis=0)
         relative_positions = torch.tensor(
-            relative_positions, dtype=torch.get_default_dtype()
+            relative_positions, dtype=torch.get_default_dtype(), requires_grad=True
         )
         nums = torch.tensor(nums, dtype=torch.get_default_dtype())
         mask = torch.BoolTensor(mask)
@@ -151,11 +139,6 @@ class Molecule:
             neighbor_species[i, : len(now)] = now
         neighbor_species = torch.LongTensor(neighbor_species)
 
-        #make this numpy lol
-        cells = []
-        for _ in range(len(self.atoms.positions)):
-            cells.append(np.array(self.atoms.get_cell()))
-
         kwargs = {
             "central_species": central_species,
             "x": relative_positions,
@@ -165,11 +148,12 @@ class Molecule:
             "nums": nums,
             "mask": mask,
             "n_atoms": len(self.atoms.positions),
+            "positions": self.positions_tensor,
+            "cell": self.box,
+            "distance_vector": self.distance_vector,
             "i_list": self.i_list,
             "j_list": self.j_list,
-            "positions": self.atoms.positions,
-            "cell": np.array(self.atoms.get_cell()),
-            "distance_vector": self.distance_vector,
+            "element": self.atoms.get_chemical_symbols()
         }
 
         if self.target_index is not None:
@@ -183,29 +167,6 @@ class Molecule:
                 self.central_scalar_attributes, dtype=torch.get_default_dtype()
             )
 
-        if self.use_long_range:
-            kwargs["cell"] = torch.tensor(self.cell, dtype=torch.get_default_dtype())[
-                None
-            ]
-            kwargs["reciprocal"] = torch.tensor(
-                self.reciprocal, dtype=torch.get_default_dtype()
-            )[None]
-            k_vectors = np.zeros([1, max_num_k, 3])
-            k_mask = np.zeros([max_num_k], dtype=bool)
-            for index in range(len(self.k_vectors)):
-                k_vectors[0, index] = self.k_vectors[index]
-                k_mask[index] = True
-            kwargs["k_vectors"] = torch.tensor(
-                k_vectors, dtype=torch.get_default_dtype()
-            )
-            kwargs["k_mask"] = torch.BoolTensor(k_mask)[None]
-
-            kwargs["positions"] = torch.tensor(
-                self.atoms.get_positions(), dtype=torch.get_default_dtype()
-            )
-            kwargs["volume"] = torch.tensor(
-                self.volume, dtype=torch.get_default_dtype()
-            )
 
         result = Data(**kwargs)
 

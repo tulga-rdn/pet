@@ -380,7 +380,7 @@ def load_checkpoint(model, optim, scheduler, checkpoint_path):
 def get_data_loaders(train_graphs, val_graphs, FITTING_SCHEME):
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2**32
-        numpy.random.seed(worker_seed)
+        np.random.seed(worker_seed)
         random.seed(worker_seed)
 
     g = torch.Generator()
@@ -597,6 +597,8 @@ def dtype2string(dtype):
         return "float16"
     if dtype == torch.bfloat16:
         return "bfloat16"
+    if dtype == torch.float64:
+        return "float64"
 
     raise ValueError("unknown dtype")
 
@@ -604,11 +606,12 @@ def dtype2string(dtype):
 def string2dtype(string):
     if string == "float32":
         return torch.float32
-    if string == "float16":
+    elif string == "float16":
         return torch.float16
-    if string == "bfloat16":
+    elif string == "bfloat16":
         return torch.bfloat16
-
+    elif string == "float64":
+        return torch.float64
     raise ValueError("unknown dtype")
 
 

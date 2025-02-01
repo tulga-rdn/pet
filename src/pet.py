@@ -744,34 +744,36 @@ class PETMLIPWrapper(torch.nn.Module):
     def get_predictions(self, batch, augmentation):
         predictions = self.model(batch, augmentation=augmentation)
 
+        positions, cells, neighbor_indices, distances = [], [], [], []
+        for data in batch.to_data_list():
+            positions.append(data.positions)
+            cells.append(data.cell)
+            neighbor_indices.append(torch.stack([data.i_list, data.j_list], dim=0).to("cuda:0"))
+            distances.append(data.distance_vector.norm(dim=-1).to("cuda:0"))
+
         last_layer_features = [t.unsqueeze(0) for t in predictions["last_layer_features"]]
         charges = [self.charges_map(f).to("cuda:0") for f in last_layer_features]
-        
-        i_list = [torch.tensor(lst) for lst in batch.i_list]
-        j_list = [torch.tensor(lst) for lst in batch.j_list]
-        idx = [torch.stack([i_list[i], j_list[i]], dim=1).to("cuda:0") for i in range(len(i_list))]
-        distances = [torch.from_numpy(d).norm(dim=-1).to("cuda:0") for d in batch.distance_vector]
-
-        positions=[torch.from_numpy(arr).to("cuda:0") for arr in batch.positions]
-
+        charges_lst = []
         charges_tensor = torch.tensor(charges, device=self.device, dtype=torch.float64).reshape(-1, 1)
-        charges_lst = [charges_tensor[last_len:last_len + lst.shape[0]] for lst, last_len in zip(positions, torch.cumsum(torch.tensor([0] + [p.shape[0] for p in positions[:-1]]), dim=0))]
-        cells=[torch.from_numpy(arr).to(self.device) for arr in batch.cell]
+        for batch_id in torch.unique(batch.batch):
+            charges_lst.append(charges_tensor[batch.batch == batch_id])
 
         potentials = []
         for position, charge, cell, neighbor_index, distance in zip(
-            positions, charges_lst, cells, idx, distances):
+            positions, charges_lst, cells, neighbor_indices, distances):
             potential = self.calculator(
                 positions=position,
                 charges=charge,
                 cell=cell,
-                neighbor_indices=neighbor_index,
+                neighbor_indices=neighbor_index.T,
                 neighbor_distances=distance
             )
             potentials.append(potential * charge)
+
         lr_energies = torch.stack([
             torch.sum(potential) for potential in potentials
         ]).to(self.device)
+
         prediction = predictions["prediction"][..., 0] + lr_energies
         if predictions["prediction"].shape[-1] != 1:
             raise ValueError(
@@ -781,11 +783,12 @@ class PETMLIPWrapper(torch.nn.Module):
         return {
             "prediction": prediction,
             "last_layer_features": predictions["last_layer_features"],
+            "charges": charges_lst
         }
 
     def forward(self, batch, augmentation, create_graph):
         if self.use_forces:
-            batch.x.requires_grad = True
+            # batch.x.requires_grad = True
             predictions = self.get_predictions(batch, augmentation)["prediction"]
             grads = torch.autograd.grad(
                 predictions,

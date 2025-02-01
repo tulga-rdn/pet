@@ -132,8 +132,6 @@ def fit_pet(
         all_species,
         ARCHITECTURAL_HYPERS.R_CUT,
         ARCHITECTURAL_HYPERS.USE_ADDITIONAL_SCALAR_ATTRIBUTES,
-        ARCHITECTURAL_HYPERS.USE_LONG_RANGE,
-        ARCHITECTURAL_HYPERS.K_CUT,
         ARCHITECTURAL_HYPERS.N_TARGETS > 1,
         ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY,
     )
@@ -142,8 +140,6 @@ def fit_pet(
         all_species,
         ARCHITECTURAL_HYPERS.R_CUT,
         ARCHITECTURAL_HYPERS.USE_ADDITIONAL_SCALAR_ATTRIBUTES,
-        ARCHITECTURAL_HYPERS.USE_LONG_RANGE,
-        ARCHITECTURAL_HYPERS.K_CUT,
         ARCHITECTURAL_HYPERS.N_TARGETS > 1,
         ARCHITECTURAL_HYPERS.TARGET_INDEX_KEY,
     )
@@ -334,7 +330,7 @@ def fit_pet(
                 loss = FITTING_SCHEME.ENERGY_WEIGHT * loss_energies / (
                     sliding_energies_rmse**2
                 ) + loss_forces / (sliding_forces_rmse**2)
-                loss.backward()
+                loss.backward(retain_graph=True)
 
             if MLIP_SETTINGS.USE_ENERGIES and (not MLIP_SETTINGS.USE_FORCES):
                 loss_energies.backward()
